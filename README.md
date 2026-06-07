@@ -1,5 +1,7 @@
 # diffguard-rs
 
+![diffguard-rs logo](https://github.com/user-attachments/assets/afa87cb3-5046-4543-9a32-0e3f228a2e0b)
+
 AI-powered code review CLI for GitHub Pull Requests. Multi-provider LLM support, GitHub Actions integration, and local pre-commit execution — all in a single Rust binary.
 
 [![CI](https://github.com/nebulaideas/diffguard-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/nebulaideas/diffguard-rs/actions/workflows/ci.yml)
