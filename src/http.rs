@@ -16,6 +16,20 @@ const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VE
 /// accidentally sending `Authorization` headers to arbitrary hosts.
 const ALLOWED_BASE_URLS: &[&str] = &["https://api.github.com"];
 
+/// Allowed LLM provider API base URLs for CI mode.
+///
+/// In CI mode, TOML `base_url` overrides are restricted to these hosts
+/// to prevent SSRF attacks where a malicious `.reviewer.toml` could
+/// redirect API calls (and auth headers) to an attacker-controlled server.
+const ALLOWED_PROVIDER_HOSTS: &[&str] = &[
+    "https://api.deepseek.com",
+    "https://api.moonshot.ai",
+    "https://dashscope-intl.aliyuncs.com",
+    "https://dashscope.aliyuncs.com",
+    "https://openrouter.ai",
+    "https://api.openai.com",
+];
+
 /// Validates that a GitHub API base URL is on the allowlist.
 ///
 /// Accepts:
@@ -56,6 +70,51 @@ pub fn validate_github_base_url(base_url: &str) -> Result<(), DiffguardError> {
          Allowed: {} or https://<enterprise-host>/api/v3",
         base_url,
         ALLOWED_BASE_URLS.join(", ")
+    )))
+}
+
+/// Validates that a provider API base URL is safe for use in CI mode.
+///
+/// In CI mode, TOML `base_url` overrides are restricted to an allowlist of
+/// known LLM provider hosts to prevent SSRF attacks where a malicious
+/// `.reviewer.toml` could redirect API calls (and auth headers) to an
+/// attacker-controlled server.
+///
+/// Accepts:
+/// - Exact prefix match against [`ALLOWED_PROVIDER_HOSTS`]
+/// - Loopback addresses (`http://127.0.0.1`, `http://localhost`) for testing
+///
+/// All non-loopback URLs must use HTTPS.
+///
+/// # Errors
+///
+/// Returns [`DiffguardError::Config`] if the URL is not allowed.
+pub fn validate_provider_base_url(base_url: &str) -> Result<(), DiffguardError> {
+    let trimmed = base_url.trim_end_matches('/');
+
+    if trimmed.starts_with("http://127.0.0.1") || trimmed.starts_with("http://localhost") {
+        return Ok(());
+    }
+
+    if !trimmed.starts_with("https://") {
+        return Err(DiffguardError::Config(format!(
+            "Provider base URL must use HTTPS in CI mode: '{}'. HTTP is not allowed.",
+            base_url
+        )));
+    }
+
+    for allowed in ALLOWED_PROVIDER_HOSTS {
+        if trimmed.starts_with(allowed) {
+            return Ok(());
+        }
+    }
+
+    Err(DiffguardError::Config(format!(
+        "Provider base URL '{}' is not in the CI allowlist. \
+         Allowed hosts: {}. \
+         To use a custom endpoint, run in local mode (unset GITHUB_ACTIONS).",
+        base_url,
+        ALLOWED_PROVIDER_HOSTS.join(", ")
     )))
 }
 
@@ -174,5 +233,40 @@ mod tests {
             headers.get(header::ACCEPT).unwrap(),
             "application/vnd.github.v3.diff"
         );
+    }
+
+    #[test]
+    fn test_provider_base_url_allows_known_hosts() {
+        assert!(validate_provider_base_url("https://api.deepseek.com").is_ok());
+        assert!(validate_provider_base_url("https://api.deepseek.com/v1").is_ok());
+        assert!(validate_provider_base_url("https://api.moonshot.ai/v1").is_ok());
+        assert!(validate_provider_base_url(
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        )
+        .is_ok());
+        assert!(validate_provider_base_url("https://openrouter.ai/api/v1").is_ok());
+        assert!(validate_provider_base_url("https://api.openai.com/v1").is_ok());
+    }
+
+    #[test]
+    fn test_provider_base_url_allows_loopback() {
+        assert!(validate_provider_base_url("http://127.0.0.1:11434/v1").is_ok());
+        assert!(validate_provider_base_url("http://localhost:8080").is_ok());
+    }
+
+    #[test]
+    fn test_provider_base_url_rejects_unknown_host() {
+        let result = validate_provider_base_url("https://evil.example.com/v1");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not in the CI allowlist"));
+    }
+
+    #[test]
+    fn test_provider_base_url_rejects_http() {
+        let result = validate_provider_base_url("http://api.deepseek.com");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("HTTPS"));
     }
 }

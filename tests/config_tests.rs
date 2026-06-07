@@ -1,5 +1,6 @@
 use clap::Parser;
-use diffguard::config::{load_toml_config, Config, TomlConfig};
+use diffguard::config::{load_toml_config, Config, ProviderTomlConfig, TomlConfig};
+use std::collections::HashMap;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
@@ -57,8 +58,9 @@ fn test_toml_parse_invalid_returns_error() {
 
 #[test]
 fn test_toml_resolution_and_fallback() {
-    // Consolidated test covering resolution order and fallback scenarios
-    // to avoid env-var interference between parallel tests.
+    // Consolidated test covering resolution order, fallback scenarios,
+    // model reset on provider change, and TOML api_key_env on switch.
+    // All env-var-dependent scenarios live here to avoid parallel interference.
 
     let mut file = NamedTempFile::new().unwrap();
     file.write_all(
@@ -186,8 +188,175 @@ api_key_env = "MY_CUSTOM_KEY"
     let err = result.unwrap_err().to_string();
     assert!(err.contains("Unknown provider"));
 
-    // Clean up all env vars
     std::env::remove_var("DIFFGUARD_PROVIDER");
-    std::env::remove_var("DIFFGUARD_MODEL");
-    std::env::remove_var("DIFFGUARD_TEMPERATURE");
+
+    // --- Scenario 8: Model resets on provider change when not explicitly set ---
+    std::env::set_var("DEEPSEEK_API_KEY", "test-deepseek-key-2");
+    std::env::set_var("KIMI_API_KEY", "test-kimi-key-2");
+
+    let toml = Some(TomlConfig {
+        provider: Some("deepseek".to_string()),
+        model: None,
+        temperature: None,
+        max_tokens: None,
+        providers: None,
+    });
+
+    let mut config = Config::from_env(toml).unwrap();
+    assert_eq!(config.model, "deepseek-v4-flash");
+
+    let args = diffguard::cli::Args::parse_from(["diffguard", "--provider", "kimi"]);
+    config.apply_args(&args).unwrap();
+
+    assert_eq!(config.provider, "kimi");
+    assert_eq!(config.model, "kimi-k2.5");
+
+    // --- Scenario 9: Model preserved when explicitly set and provider changes ---
+    let toml = Some(TomlConfig {
+        provider: Some("deepseek".to_string()),
+        model: Some("my-custom-model".to_string()),
+        temperature: None,
+        max_tokens: None,
+        providers: None,
+    });
+
+    let mut config = Config::from_env(toml).unwrap();
+    assert_eq!(config.model, "my-custom-model");
+
+    let args = diffguard::cli::Args::parse_from(["diffguard", "--provider", "kimi"]);
+    config.apply_args(&args).unwrap();
+
+    assert_eq!(config.provider, "kimi");
+    assert_eq!(config.model, "my-custom-model");
+
+    // --- Scenario 10: apply_args respects TOML api_key_env on provider switch ---
+    std::env::set_var("MY_KIMI_KEY", "custom-kimi-key");
+
+    let toml = Some(TomlConfig {
+        provider: Some("deepseek".to_string()),
+        model: None,
+        temperature: None,
+        max_tokens: None,
+        providers: Some({
+            let mut m = HashMap::new();
+            m.insert(
+                "kimi".to_string(),
+                ProviderTomlConfig {
+                    api_key_env: Some("MY_KIMI_KEY".to_string()),
+                    base_url: None,
+                    http_referer: None,
+                },
+            );
+            m
+        }),
+    });
+
+    let mut config = Config::from_env(toml).unwrap();
+    assert_eq!(config.provider, "deepseek");
+
+    let args = diffguard::cli::Args::parse_from(["diffguard", "--provider", "kimi"]);
+    config.apply_args(&args).unwrap();
+
+    assert_eq!(config.provider, "kimi");
+    assert_eq!(config.api_key, "custom-kimi-key");
+
+    // Clean up all env vars
+    std::env::remove_var("DEEPSEEK_API_KEY");
+    std::env::remove_var("KIMI_API_KEY");
+    std::env::remove_var("MY_KIMI_KEY");
+
+    // --- Scenario 11: SSRF rejection in CI mode ---
+    std::env::set_var("GITHUB_ACTIONS", "true");
+    std::env::set_var("GITHUB_TOKEN", "test-token");
+    std::env::set_var("PR_NUMBER", "42");
+    std::env::set_var("REPO_FULL_NAME", "owner/repo");
+    std::env::set_var("DIFFGUARD_PROVIDER", "deepseek");
+    std::env::set_var("DEEPSEEK_API_KEY", "test-key-ssrf");
+
+    let toml = Some(TomlConfig {
+        provider: Some("deepseek".to_string()),
+        model: None,
+        temperature: None,
+        max_tokens: None,
+        providers: Some({
+            let mut m = HashMap::new();
+            m.insert(
+                "deepseek".to_string(),
+                ProviderTomlConfig {
+                    api_key_env: None,
+                    base_url: Some("https://evil.example.com/v1".to_string()),
+                    http_referer: None,
+                },
+            );
+            m
+        }),
+    });
+
+    let result = Config::from_env(toml);
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("not in the CI allowlist"));
+
+    // --- Scenario 12: SSRF allows known host in CI mode ---
+    let toml = Some(TomlConfig {
+        provider: Some("deepseek".to_string()),
+        model: None,
+        temperature: None,
+        max_tokens: None,
+        providers: Some({
+            let mut m = HashMap::new();
+            m.insert(
+                "deepseek".to_string(),
+                ProviderTomlConfig {
+                    api_key_env: None,
+                    base_url: Some("https://api.deepseek.com".to_string()),
+                    http_referer: None,
+                },
+            );
+            m
+        }),
+    });
+
+    let config = Config::from_env(toml).unwrap();
+    assert_eq!(
+        config.provider_config.base_url,
+        Some("https://api.deepseek.com".to_string())
+    );
+
+    // --- Scenario 13: SSRF allows any host in local mode ---
+    std::env::remove_var("GITHUB_ACTIONS");
+    std::env::remove_var("GITHUB_TOKEN");
+    std::env::remove_var("PR_NUMBER");
+    std::env::remove_var("REPO_FULL_NAME");
+
+    let toml = Some(TomlConfig {
+        provider: Some("deepseek".to_string()),
+        model: None,
+        temperature: None,
+        max_tokens: None,
+        providers: Some({
+            let mut m = HashMap::new();
+            m.insert(
+                "deepseek".to_string(),
+                ProviderTomlConfig {
+                    api_key_env: None,
+                    base_url: Some("https://my-local-llm.example.com/v1".to_string()),
+                    http_referer: None,
+                },
+            );
+            m
+        }),
+    });
+
+    let config = Config::from_env(toml).unwrap();
+    assert_eq!(
+        config.provider_config.base_url,
+        Some("https://my-local-llm.example.com/v1".to_string())
+    );
+
+    // Final cleanup
+    std::env::remove_var("DIFFGUARD_PROVIDER");
+    std::env::remove_var("DEEPSEEK_API_KEY");
 }

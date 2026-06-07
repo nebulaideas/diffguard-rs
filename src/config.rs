@@ -7,9 +7,10 @@
 
 use crate::cli::Args;
 use crate::error::DiffguardError;
-use crate::http::validate_github_base_url;
+use crate::http::{validate_github_base_url, validate_provider_base_url};
 use crate::llm::ProviderConfig;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Default system prompt embedded in the binary.
@@ -60,7 +61,7 @@ pub struct TomlConfig {
     /// Maximum tokens for LLM completions.
     pub max_tokens: Option<u32>,
     /// Per-provider configuration sections.
-    pub providers: Option<std::collections::HashMap<String, ProviderTomlConfig>>,
+    pub providers: Option<HashMap<String, ProviderTomlConfig>>,
 }
 
 /// Parses a `.reviewer.toml` configuration file.
@@ -120,15 +121,39 @@ fn standard_api_key_env_var(provider: &str) -> Result<&'static str, DiffguardErr
 }
 
 /// Returns the default model for the given known provider.
-fn default_model(provider: &str) -> &'static str {
+///
+/// # Errors
+///
+/// Returns [`DiffguardError::Config`] if the provider name is not recognized.
+fn default_model(provider: &str) -> Result<&'static str, DiffguardError> {
     match provider {
-        "deepseek" => "deepseek-v4-flash",
-        "kimi" => "kimi-k2.5",
-        "qwen" => "qwen-plus",
-        "openrouter" => "openai/gpt-4o-mini",
-        "openai" => "gpt-4o-mini",
-        _ => "deepseek-v4-flash",
+        "deepseek" => Ok("deepseek-v4-flash"),
+        "kimi" => Ok("kimi-k2.5"),
+        "qwen" => Ok("qwen-plus"),
+        "openrouter" => Ok("openai/gpt-4o-mini"),
+        "openai" => Ok("gpt-4o-mini"),
+        _ => Err(DiffguardError::Config(format!(
+            "Unknown provider: '{}'. Supported: {}",
+            provider,
+            KNOWN_PROVIDERS.join(", ")
+        ))),
     }
+}
+
+/// Resolves the API key environment variable for a provider, checking
+/// TOML overrides first, then falling back to the standard mapping.
+fn resolve_api_key_env_var(
+    provider: &str,
+    toml_providers: Option<&HashMap<String, ProviderTomlConfig>>,
+) -> Result<String, DiffguardError> {
+    if let Some(providers) = toml_providers {
+        if let Some(toml_provider) = providers.get(provider) {
+            if let Some(ref env_var) = toml_provider.api_key_env {
+                return Ok(env_var.clone());
+            }
+        }
+    }
+    standard_api_key_env_var(provider).map(|s| s.to_string())
 }
 
 /// Resolved application configuration.
@@ -156,10 +181,13 @@ pub struct Config {
     pub is_ci: bool,
     /// GitHub API base URL.
     pub github_base_url: String,
-    /// Maximum tokens for LLM completions.
-    pub max_tokens: Option<u32>,
     /// Provider-specific configuration overrides from TOML.
     pub provider_config: ProviderConfig,
+    /// TOML per-provider sections (retained for `apply_args` provider switching).
+    toml_providers: HashMap<String, ProviderTomlConfig>,
+    /// Whether the model was explicitly set (via env, TOML, or CLI).
+    /// When `false` and the provider changes, the model resets to the new provider's default.
+    model_explicitly_set: bool,
 }
 
 impl Config {
@@ -178,6 +206,11 @@ impl Config {
     pub fn from_env(toml: Option<TomlConfig>) -> Result<Self, DiffguardError> {
         let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
 
+        let toml_providers = toml
+            .as_ref()
+            .and_then(|t| t.providers.clone())
+            .unwrap_or_default();
+
         // Provider: env > toml > default
         let provider = std::env::var("DIFFGUARD_PROVIDER")
             .ok()
@@ -188,17 +221,9 @@ impl Config {
         standard_api_key_env_var(&provider)?;
 
         // Resolve API key env var: TOML override > standard mapping
-        let toml_provider = toml
-            .as_ref()
-            .and_then(|t| t.providers.as_ref())
-            .and_then(|p| p.get(&provider));
+        let api_key_env = resolve_api_key_env_var(&provider, Some(&toml_providers))?;
 
-        let api_key_env = toml_provider
-            .and_then(|p| p.api_key_env.as_deref())
-            .map(Ok)
-            .unwrap_or_else(|| standard_api_key_env_var(&provider))?;
-
-        let api_key = std::env::var(api_key_env).map_err(|_| {
+        let api_key = std::env::var(&api_key_env).map_err(|_| {
             DiffguardError::Config(format!(
                 "API key not found. Set {} for provider '{}'",
                 api_key_env, provider
@@ -225,10 +250,14 @@ impl Config {
             .unwrap_or_else(|_| "https://api.github.com".to_string());
 
         // Model: env > toml > provider default
-        let model = std::env::var("DIFFGUARD_MODEL")
-            .ok()
-            .or_else(|| toml.as_ref().and_then(|t| t.model.clone()))
-            .unwrap_or_else(|| default_model(&provider).to_string());
+        let env_model = std::env::var("DIFFGUARD_MODEL").ok();
+        let toml_model = toml.as_ref().and_then(|t| t.model.clone());
+        let model_explicitly_set = env_model.is_some() || toml_model.is_some();
+        let model = env_model.or(toml_model).unwrap_or_else(|| {
+            default_model(&provider)
+                .unwrap_or("deepseek-v4-flash")
+                .to_string()
+        });
 
         // Temperature: env > toml > default
         let temperature = std::env::var("DIFFGUARD_TEMPERATURE")
@@ -237,15 +266,23 @@ impl Config {
             .or(toml.as_ref().and_then(|t| t.temperature))
             .unwrap_or(0.1);
 
-        // Max tokens: env > toml > none
+        // Max tokens: env > toml > none (single source of truth in provider_config)
         let max_tokens = std::env::var("DIFFGUARD_MAX_TOKENS")
             .ok()
             .and_then(|s| s.parse().ok())
             .or(toml.as_ref().and_then(|t| t.max_tokens));
 
-        // Provider config from TOML
+        // Provider config from TOML — validate base_url against SSRF allowlist in CI
+        let toml_provider = toml_providers.get(&provider);
+        let base_url = toml_provider.and_then(|p| p.base_url.clone());
+        if is_ci {
+            if let Some(ref url) = base_url {
+                validate_provider_base_url(url)?;
+            }
+        }
+
         let provider_config = ProviderConfig {
-            base_url: toml_provider.and_then(|p| p.base_url.clone()),
+            base_url,
             http_referer: toml_provider.and_then(|p| p.http_referer.clone()),
             max_tokens,
         };
@@ -262,8 +299,9 @@ impl Config {
             prompt: DEFAULT_PROMPT.to_string(),
             is_ci,
             github_base_url,
-            max_tokens,
             provider_config,
+            toml_providers,
+            model_explicitly_set,
         })
     }
 
@@ -271,27 +309,18 @@ impl Config {
     ///
     /// CLI flags take precedence over environment variables and TOML for `model`,
     /// `temperature`, `provider`, and `max_tokens`. If the provider changes, the
-    /// API key is re-resolved from the corresponding environment variable.
+    /// API key is re-resolved (respecting TOML `api_key_env` overrides) and the
+    /// model is reset to the new provider's default unless explicitly overridden.
     ///
     /// # Errors
     ///
     /// Returns [`DiffguardError::Config`] if the provider changes and the
     /// new provider's API key environment variable is not set.
     pub fn apply_args(&mut self, args: &Args) -> Result<(), DiffguardError> {
-        if let Some(ref model) = args.model {
-            self.model = model.clone();
-        }
-        if let Some(temp) = args.temperature {
-            self.temperature = temp;
-        }
-        if let Some(max_tokens) = args.max_tokens {
-            self.max_tokens = Some(max_tokens);
-            self.provider_config.max_tokens = Some(max_tokens);
-        }
         if let Some(ref provider) = args.provider {
             if *provider != self.provider {
-                let new_env = standard_api_key_env_var(provider)?;
-                let new_key = std::env::var(new_env).map_err(|_| {
+                let new_env = resolve_api_key_env_var(provider, Some(&self.toml_providers))?;
+                let new_key = std::env::var(&new_env).map_err(|_| {
                     DiffguardError::Config(format!(
                         "API key not found. Set {} for provider '{}'",
                         new_env, provider
@@ -299,7 +328,37 @@ impl Config {
                 })?;
                 self.api_key = new_key;
                 self.provider = provider.clone();
+
+                // Update provider_config from TOML for the new provider
+                let toml_provider = self.toml_providers.get(provider);
+                let new_base_url = toml_provider.and_then(|p| p.base_url.clone());
+                if self.is_ci {
+                    if let Some(ref url) = new_base_url {
+                        validate_provider_base_url(url)?;
+                    }
+                }
+                self.provider_config.base_url = new_base_url;
+                self.provider_config.http_referer =
+                    toml_provider.and_then(|p| p.http_referer.clone());
+
+                // Reset model to new provider's default unless explicitly overridden
+                if !self.model_explicitly_set && args.model.is_none() {
+                    self.model = default_model(provider)
+                        .unwrap_or("deepseek-v4-flash")
+                        .to_string();
+                }
             }
+        }
+
+        if let Some(ref model) = args.model {
+            self.model = model.clone();
+            self.model_explicitly_set = true;
+        }
+        if let Some(temp) = args.temperature {
+            self.temperature = temp;
+        }
+        if let Some(max_tokens) = args.max_tokens {
+            self.provider_config.max_tokens = Some(max_tokens);
         }
 
         Ok(())
@@ -391,10 +450,41 @@ mod tests {
 
     #[test]
     fn test_default_model_mapping() {
-        assert_eq!(default_model("deepseek"), "deepseek-v4-flash");
-        assert_eq!(default_model("kimi"), "kimi-k2.5");
-        assert_eq!(default_model("qwen"), "qwen-plus");
-        assert_eq!(default_model("openrouter"), "openai/gpt-4o-mini");
-        assert_eq!(default_model("openai"), "gpt-4o-mini");
+        assert_eq!(default_model("deepseek").unwrap(), "deepseek-v4-flash");
+        assert_eq!(default_model("kimi").unwrap(), "kimi-k2.5");
+        assert_eq!(default_model("qwen").unwrap(), "qwen-plus");
+        assert_eq!(default_model("openrouter").unwrap(), "openai/gpt-4o-mini");
+        assert_eq!(default_model("openai").unwrap(), "gpt-4o-mini");
+    }
+
+    #[test]
+    fn test_default_model_unknown_provider_returns_error() {
+        let result = default_model("unknown");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unknown provider"));
+    }
+
+    #[test]
+    fn test_resolve_api_key_env_var_toml_override() {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "openai".to_string(),
+            ProviderTomlConfig {
+                api_key_env: Some("MY_CUSTOM_KEY".to_string()),
+                base_url: None,
+                http_referer: None,
+            },
+        );
+
+        let result = resolve_api_key_env_var("openai", Some(&providers)).unwrap();
+        assert_eq!(result, "MY_CUSTOM_KEY");
+    }
+
+    #[test]
+    fn test_resolve_api_key_env_var_standard_fallback() {
+        let providers = HashMap::new();
+        let result = resolve_api_key_env_var("deepseek", Some(&providers)).unwrap();
+        assert_eq!(result, "DEEPSEEK_API_KEY");
     }
 }

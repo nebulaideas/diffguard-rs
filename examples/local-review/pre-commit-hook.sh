@@ -12,6 +12,12 @@
 # export DIFFGUARD_PROVIDER="deepseek"
 # export DEEPSEEK_API_KEY="your-api-key"
 
+if ! command -v diffguard >/dev/null 2>&1; then
+    echo "diffguard: not found in PATH. Skipping AI review."
+    echo "Install from: https://github.com/nebulaideas/diffguard-rs/releases"
+    exit 0
+fi
+
 echo "Running diffguard pre-commit review..."
 
 diffguard

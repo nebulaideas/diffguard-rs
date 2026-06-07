@@ -111,7 +111,6 @@ pub struct ProviderConfig {
 ///
 /// Shared implementation used by all provider modules to avoid duplication
 /// in HTTP error handling, response deserialization, and content extraction.
-/// Logs `reasoning_content` at debug level when present.
 ///
 /// # Arguments
 ///
@@ -165,15 +164,6 @@ pub(crate) async fn send_chat_request<B: Serialize + Send>(
             status: 0,
             message: "Empty response from LLM".to_string(),
         })?;
-
-    if let Some(reasoning) = &choice.message.reasoning_content {
-        log::debug!(
-            "[{}] reasoning_content ({} chars): {}...",
-            provider_name,
-            reasoning.len(),
-            &reasoning[..reasoning.len().min(200)]
-        );
-    }
 
     Ok(choice.message.content)
 }
