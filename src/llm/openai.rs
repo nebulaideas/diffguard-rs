@@ -1,36 +1,31 @@
-//! DeepSeek LLM provider implementation.
+//! Generic OpenAI-compatible LLM provider implementation.
 //!
-//! Communicates with the DeepSeek chat completions API using an
-//! OpenAI-compatible request format.
+//! Catch-all for any OpenAI-compatible endpoint. Configurable base URL
+//! and model identifier.
 
 use crate::error::DiffguardError;
 use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatRequest, LlmProvider};
 use async_trait::async_trait;
 
-/// Default DeepSeek API base URL.
-const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
+/// Default OpenAI API base URL.
+const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
-/// Default model identifier for DeepSeek.
-const DEFAULT_MODEL: &str = "deepseek-v4-flash";
+/// Default model identifier for OpenAI.
+const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
-/// Client for the DeepSeek chat completions API.
+/// Client for generic OpenAI-compatible chat completions APIs.
 #[derive(Debug, Clone)]
-pub struct DeepSeekClient {
+pub struct OpenAiClient {
     base_url: String,
     model: String,
     max_tokens: Option<u32>,
     client: reqwest::Client,
 }
 
-impl DeepSeekClient {
-    /// Creates a new DeepSeek client with the given API key.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API key contains invalid header characters
-    /// or if the HTTP client cannot be built.
+impl OpenAiClient {
+    /// Creates a new OpenAI-compatible client with the given API key.
     pub fn new(api_key: impl Into<String>) -> Result<Self, DiffguardError> {
-        let client = build_llm_client("deepseek", &api_key.into(), &[])?;
+        let client = build_llm_client("openai", &api_key.into(), &[])?;
         Ok(Self {
             base_url: DEFAULT_BASE_URL.to_string(),
             model: DEFAULT_MODEL.to_string(),
@@ -59,9 +54,9 @@ impl DeepSeekClient {
 }
 
 #[async_trait]
-impl LlmProvider for DeepSeekClient {
+impl LlmProvider for OpenAiClient {
     fn name(&self) -> &'static str {
-        "deepseek"
+        "openai"
     }
 
     async fn chat_completion(
@@ -78,7 +73,7 @@ impl LlmProvider for DeepSeekClient {
         };
 
         let url = format!("{}/chat/completions", self.base_url);
-        send_chat_request(&self.client, &url, &request, "deepseek").await
+        send_chat_request(&self.client, &url, &request, "openai").await
     }
 }
 
@@ -97,14 +92,14 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
                     "message": {
-                        "content": "This looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
+                        "content": "Looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
                     }
                 }]
             })))
             .mount(&mock_server)
             .await;
 
-        let client = DeepSeekClient::new("test-key")
+        let client = OpenAiClient::new("test-key")
             .unwrap()
             .with_base_url(mock_server.uri());
         let result = client
@@ -125,7 +120,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let client = DeepSeekClient::new("test-key")
+        let client = OpenAiClient::new("test-key")
             .unwrap()
             .with_base_url(mock_server.uri());
         let result = client
@@ -135,5 +130,32 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("429"));
+        assert!(err.contains("openai"));
+    }
+
+    #[tokio::test]
+    async fn test_custom_base_url() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{
+                    "message": { "content": "Custom endpoint works." }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = OpenAiClient::new("test-key")
+            .unwrap()
+            .with_base_url(mock_server.uri())
+            .with_model("custom-model");
+        let result = client
+            .chat_completion("You are a reviewer.", "diff content", 0.1)
+            .await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("Custom endpoint works"));
     }
 }

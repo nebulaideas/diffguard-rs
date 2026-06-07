@@ -5,7 +5,9 @@
 //! strict allowlisting of GitHub API endpoints.
 
 use crate::error::DiffguardError;
+use crate::llm::providers;
 use reqwest::header::{self, HeaderMap, HeaderValue};
+use url::Url;
 
 /// User-Agent string derived from package metadata at compile time.
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -56,6 +58,78 @@ pub fn validate_github_base_url(base_url: &str) -> Result<(), DiffguardError> {
          Allowed: {} or https://<enterprise-host>/api/v3",
         base_url,
         ALLOWED_BASE_URLS.join(", ")
+    )))
+}
+
+/// Validates that a provider API base URL is safe for use in CI mode.
+///
+/// In CI mode, TOML `base_url` overrides are restricted to an exact allowlist
+/// of known LLM provider (scheme, host) pairs to prevent SSRF attacks where a
+/// malicious `.reviewer.toml` could redirect API calls (and auth headers) to
+/// an attacker-controlled server.
+///
+/// Loopback addresses (`127.0.0.1`, `localhost`) are **rejected** in CI mode
+/// to prevent token exfiltration to attacker-controlled local servers.
+///
+/// All URLs must use HTTPS.
+///
+/// # Errors
+///
+/// Returns [`DiffguardError::Config`] if the URL is not allowed.
+pub fn validate_provider_base_url(base_url: &str) -> Result<(), DiffguardError> {
+    let parsed = Url::parse(base_url).map_err(|_| {
+        DiffguardError::Config(format!(
+            "Provider base URL is malformed: '{}'. Expected format: https://host/path",
+            base_url
+        ))
+    })?;
+
+    if parsed.scheme() != "https" {
+        return Err(DiffguardError::Config(format!(
+            "Provider base URL must use HTTPS in CI mode: '{}'. HTTP is not allowed.",
+            base_url
+        )));
+    }
+
+    let host = parsed.host_str().ok_or_else(|| {
+        DiffguardError::Config(format!(
+            "Provider base URL is malformed: '{}'. No host found.",
+            base_url
+        ))
+    })?;
+
+    if host == "127.0.0.1"
+        || host == "localhost"
+        || host == "[::1]"
+        || host == "0.0.0.0"
+        || host == "[::]"
+    {
+        return Err(DiffguardError::Config(format!(
+            "Provider base URL '{}' uses loopback address, which is not allowed in CI mode \
+             to prevent token exfiltration. Use a known provider endpoint or run in local mode.",
+            base_url
+        )));
+    }
+
+    let ci_hosts = providers::all_ci_allowed_hosts();
+    for &(allowed_scheme, allowed_host) in &ci_hosts {
+        if parsed.scheme() == allowed_scheme && host == allowed_host {
+            return Ok(());
+        }
+    }
+
+    let allowed_display: Vec<String> = ci_hosts
+        .iter()
+        .map(|(s, h)| format!("{}://{}", s, h))
+        .collect();
+
+    Err(DiffguardError::Config(format!(
+        "Provider base URL '{}' (host: {}) is not in the CI allowlist. \
+         Allowed hosts: {}. \
+         To use a custom endpoint, run in local mode (unset GITHUB_ACTIONS).",
+        base_url,
+        host,
+        allowed_display.join(", ")
     )))
 }
 
@@ -174,5 +248,84 @@ mod tests {
             headers.get(header::ACCEPT).unwrap(),
             "application/vnd.github.v3.diff"
         );
+    }
+
+    #[test]
+    fn test_provider_base_url_allows_known_hosts() {
+        assert!(validate_provider_base_url("https://api.deepseek.com").is_ok());
+        assert!(validate_provider_base_url("https://api.deepseek.com/v1").is_ok());
+        assert!(validate_provider_base_url("https://api.moonshot.ai/v1").is_ok());
+        assert!(validate_provider_base_url(
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        )
+        .is_ok());
+        assert!(validate_provider_base_url("https://openrouter.ai/api/v1").is_ok());
+        assert!(validate_provider_base_url("https://api.openai.com/v1").is_ok());
+    }
+
+    #[test]
+    fn test_provider_base_url_rejects_loopback() {
+        let result = validate_provider_base_url("http://127.0.0.1:11434/v1");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("loopback") || err.contains("HTTPS"));
+
+        let result = validate_provider_base_url("https://localhost:8080");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("loopback"));
+    }
+
+    #[test]
+    fn test_provider_base_url_rejects_subdomain_spoof() {
+        let result = validate_provider_base_url("https://api.deepseek.com.evil.com/v1");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not in the CI allowlist"));
+    }
+
+    #[test]
+    fn test_provider_base_url_rejects_unknown_host() {
+        let result = validate_provider_base_url("https://evil.example.com/v1");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not in the CI allowlist"));
+    }
+
+    #[test]
+    fn test_provider_base_url_rejects_http() {
+        let result = validate_provider_base_url("http://api.deepseek.com");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("HTTPS"));
+    }
+
+    #[test]
+    fn test_provider_base_url_rejects_malformed() {
+        let result = validate_provider_base_url("not-a-url");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("malformed"));
+    }
+
+    #[test]
+    fn test_provider_base_url_rejects_ipv6_loopback() {
+        let result = validate_provider_base_url("https://[::1]:11434/v1");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("loopback"));
+    }
+
+    #[test]
+    fn test_provider_base_url_rejects_bind_all() {
+        let result = validate_provider_base_url("https://0.0.0.0:8080/v1");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("loopback"));
+
+        let result = validate_provider_base_url("https://[::]:8080/v1");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("loopback"));
     }
 }

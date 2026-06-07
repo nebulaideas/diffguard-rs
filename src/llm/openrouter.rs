@@ -1,36 +1,39 @@
-//! DeepSeek LLM provider implementation.
+//! OpenRouter LLM gateway provider implementation.
 //!
-//! Communicates with the DeepSeek chat completions API using an
-//! OpenAI-compatible request format.
+//! Communicates with the OpenRouter unified API, routing to any supported
+//! model. Requires `HTTP-Referer` and `X-Title` headers for attribution.
 
 use crate::error::DiffguardError;
 use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatRequest, LlmProvider};
 use async_trait::async_trait;
 
-/// Default DeepSeek API base URL.
-const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
+/// Default OpenRouter API base URL.
+const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
-/// Default model identifier for DeepSeek.
-const DEFAULT_MODEL: &str = "deepseek-v4-flash";
+/// Default model identifier for OpenRouter.
+const DEFAULT_MODEL: &str = "openai/gpt-4o-mini";
 
-/// Client for the DeepSeek chat completions API.
+/// Default HTTP referer for attribution.
+const DEFAULT_HTTP_REFERER: &str = "https://github.com/nebulaideas/diffguard-rs";
+
+/// Client for the OpenRouter chat completions API.
 #[derive(Debug, Clone)]
-pub struct DeepSeekClient {
+pub struct OpenRouterClient {
     base_url: String,
     model: String,
     max_tokens: Option<u32>,
     client: reqwest::Client,
 }
 
-impl DeepSeekClient {
-    /// Creates a new DeepSeek client with the given API key.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API key contains invalid header characters
-    /// or if the HTTP client cannot be built.
+impl OpenRouterClient {
+    /// Creates a new OpenRouter client with the given API key.
     pub fn new(api_key: impl Into<String>) -> Result<Self, DiffguardError> {
-        let client = build_llm_client("deepseek", &api_key.into(), &[])?;
+        let api_key_str = api_key.into();
+        let extra_headers = &[
+            ("HTTP-Referer", DEFAULT_HTTP_REFERER),
+            ("X-Title", "diffguard"),
+        ];
+        let client = build_llm_client("openrouter", &api_key_str, extra_headers)?;
         Ok(Self {
             base_url: DEFAULT_BASE_URL.to_string(),
             model: DEFAULT_MODEL.to_string(),
@@ -56,12 +59,24 @@ impl DeepSeekClient {
         self.max_tokens = max_tokens;
         self
     }
+
+    /// Rebuilds the HTTP client with a custom HTTP referer header.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DiffguardError::Config`] if the referer value contains
+    /// invalid header characters.
+    pub fn with_http_referer(self, referer: &str, api_key: &str) -> Result<Self, DiffguardError> {
+        let extra_headers = &[("HTTP-Referer", referer), ("X-Title", "diffguard")];
+        let client = build_llm_client("openrouter", api_key, extra_headers)?;
+        Ok(Self { client, ..self })
+    }
 }
 
 #[async_trait]
-impl LlmProvider for DeepSeekClient {
+impl LlmProvider for OpenRouterClient {
     fn name(&self) -> &'static str {
-        "deepseek"
+        "openrouter"
     }
 
     async fn chat_completion(
@@ -78,14 +93,14 @@ impl LlmProvider for DeepSeekClient {
         };
 
         let url = format!("{}/chat/completions", self.base_url);
-        send_chat_request(&self.client, &url, &request, "deepseek").await
+        send_chat_request(&self.client, &url, &request, "openrouter").await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
@@ -97,14 +112,14 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
                     "message": {
-                        "content": "This looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
+                        "content": "Looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
                     }
                 }]
             })))
             .mount(&mock_server)
             .await;
 
-        let client = DeepSeekClient::new("test-key")
+        let client = OpenRouterClient::new("test-key")
             .unwrap()
             .with_base_url(mock_server.uri());
         let result = client
@@ -125,7 +140,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let client = DeepSeekClient::new("test-key")
+        let client = OpenRouterClient::new("test-key")
             .unwrap()
             .with_base_url(mock_server.uri());
         let result = client
@@ -135,5 +150,33 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("429"));
+        assert!(err.contains("openrouter"));
+    }
+
+    #[tokio::test]
+    async fn test_referer_header_sent() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(header("HTTP-Referer", "https://example.com"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{
+                    "message": { "content": "OK" }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = OpenRouterClient::new("test-key")
+            .unwrap()
+            .with_base_url(mock_server.uri())
+            .with_http_referer("https://example.com", "test-key")
+            .unwrap();
+        let result = client
+            .chat_completion("You are a reviewer.", "diff content", 0.1)
+            .await;
+
+        assert!(result.is_ok());
     }
 }

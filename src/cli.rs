@@ -18,30 +18,94 @@ pub struct Args {
     )]
     pub prompt_file: PathBuf,
 
-    /// LLM model identifier.
+    /// LLM model identifier (default: provider-specific).
     #[arg(
         short,
         long,
-        default_value = "deepseek-v4-flash",
-        help = "LLM model identifier"
+        help = "LLM model identifier (default: provider-specific)"
     )]
-    pub model: String,
+    pub model: Option<String>,
 
-    /// Sampling temperature (0.0 - 2.0).
+    /// Sampling temperature (0.0 - 2.0). Default: 0.1.
     #[arg(
         short,
         long,
-        default_value_t = 0.1,
-        help = "Sampling temperature (0.0 - 2.0)"
+        help = "Sampling temperature (0.0 - 2.0) [default: 0.1]",
+        value_parser = parse_temperature
     )]
-    pub temperature: f32,
+    pub temperature: Option<f32>,
 
-    /// LLM provider to use.
+    /// LLM provider to use. Default: deepseek.
     #[arg(
         long,
         env = "DIFFGUARD_PROVIDER",
-        default_value = "deepseek",
-        help = "LLM provider to use"
+        help = "LLM provider to use [default: deepseek]"
     )]
-    pub provider: String,
+    pub provider: Option<String>,
+
+    /// Path to configuration TOML file.
+    #[arg(
+        short,
+        long,
+        default_value = ".reviewer.toml",
+        help = "Path to configuration TOML file"
+    )]
+    pub config: PathBuf,
+
+    /// Maximum tokens for LLM completions.
+    #[arg(long, help = "Maximum tokens for LLM completions")]
+    pub max_tokens: Option<u32>,
+
+    /// Path to a pre-existing diff file to review instead of fetching from GitHub.
+    ///
+    /// When set, diffguard reads the diff content from this file path
+    /// instead of calling the GitHub API. Useful in CI when the diff has
+    /// already been generated (e.g. by `git diff` or a prior workflow step).
+    /// If the file does not exist, an error is returned.
+    #[arg(
+        long,
+        env = "DIFFGUARD_DIFF_FILE",
+        help = "Path to a pre-existing diff file to review"
+    )]
+    pub diff_file: Option<String>,
+}
+
+/// Validates that a temperature value is within the OpenAI-compatible range (0.0 - 2.0).
+fn parse_temperature(s: &str) -> Result<f32, String> {
+    let v: f32 = s
+        .parse()
+        .map_err(|e| format!("Invalid temperature '{}': {}", s, e))?;
+    if !(0.0..=2.0).contains(&v) {
+        return Err(format!(
+            "Temperature must be between 0.0 and 2.0, got: {}",
+            v
+        ));
+    }
+    Ok(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_temperature_valid() {
+        assert_eq!(parse_temperature("0.0").unwrap(), 0.0);
+        assert_eq!(parse_temperature("0.1").unwrap(), 0.1);
+        assert_eq!(parse_temperature("1.0").unwrap(), 1.0);
+        assert_eq!(parse_temperature("2.0").unwrap(), 2.0);
+    }
+
+    #[test]
+    fn test_parse_temperature_out_of_range() {
+        assert!(parse_temperature("-0.1").is_err());
+        assert!(parse_temperature("2.1").is_err());
+        assert!(parse_temperature("5.0").is_err());
+    }
+
+    #[test]
+    fn test_parse_temperature_invalid_string() {
+        assert!(parse_temperature("not-a-number").is_err());
+        assert!(parse_temperature("").is_err());
+    }
 }

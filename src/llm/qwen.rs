@@ -1,36 +1,43 @@
-//! DeepSeek LLM provider implementation.
+//! Qwen (Alibaba Cloud) LLM provider implementation.
 //!
-//! Communicates with the DeepSeek chat completions API using an
-//! OpenAI-compatible request format.
+//! Communicates with the DashScope-compatible chat completions API.
+//! Sends `result_format: "message"` as required by the DashScope API.
 
 use crate::error::DiffguardError;
-use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatRequest, LlmProvider};
+use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatMessage, LlmProvider};
 use async_trait::async_trait;
+use serde::Serialize;
 
-/// Default DeepSeek API base URL.
-const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
+/// Default Qwen API base URL.
+const DEFAULT_BASE_URL: &str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 
-/// Default model identifier for DeepSeek.
-const DEFAULT_MODEL: &str = "deepseek-v4-flash";
+/// Default model identifier for Qwen.
+const DEFAULT_MODEL: &str = "qwen-plus";
 
-/// Client for the DeepSeek chat completions API.
+/// Qwen-specific chat request with `result_format` field.
+#[derive(Debug, Serialize)]
+struct QwenChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    temperature: f32,
+    result_format: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+}
+
+/// Client for the Qwen chat completions API.
 #[derive(Debug, Clone)]
-pub struct DeepSeekClient {
+pub struct QwenClient {
     base_url: String,
     model: String,
     max_tokens: Option<u32>,
     client: reqwest::Client,
 }
 
-impl DeepSeekClient {
-    /// Creates a new DeepSeek client with the given API key.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API key contains invalid header characters
-    /// or if the HTTP client cannot be built.
+impl QwenClient {
+    /// Creates a new Qwen client with the given API key.
     pub fn new(api_key: impl Into<String>) -> Result<Self, DiffguardError> {
-        let client = build_llm_client("deepseek", &api_key.into(), &[])?;
+        let client = build_llm_client("qwen", &api_key.into(), &[])?;
         Ok(Self {
             base_url: DEFAULT_BASE_URL.to_string(),
             model: DEFAULT_MODEL.to_string(),
@@ -59,9 +66,9 @@ impl DeepSeekClient {
 }
 
 #[async_trait]
-impl LlmProvider for DeepSeekClient {
+impl LlmProvider for QwenClient {
     fn name(&self) -> &'static str {
-        "deepseek"
+        "qwen"
     }
 
     async fn chat_completion(
@@ -70,15 +77,16 @@ impl LlmProvider for DeepSeekClient {
         user_message: &str,
         temperature: f32,
     ) -> Result<String, DiffguardError> {
-        let request = ChatRequest {
+        let request = QwenChatRequest {
             model: self.model.clone(),
             messages: chat_messages(system_prompt, user_message),
             temperature,
+            result_format: "message",
             max_tokens: self.max_tokens,
         };
 
         let url = format!("{}/chat/completions", self.base_url);
-        send_chat_request(&self.client, &url, &request, "deepseek").await
+        send_chat_request(&self.client, &url, &request, "qwen").await
     }
 }
 
@@ -97,14 +105,14 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
                     "message": {
-                        "content": "This looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
+                        "content": "Looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
                     }
                 }]
             })))
             .mount(&mock_server)
             .await;
 
-        let client = DeepSeekClient::new("test-key")
+        let client = QwenClient::new("test-key")
             .unwrap()
             .with_base_url(mock_server.uri());
         let result = client
@@ -125,7 +133,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let client = DeepSeekClient::new("test-key")
+        let client = QwenClient::new("test-key")
             .unwrap()
             .with_base_url(mock_server.uri());
         let result = client
@@ -135,5 +143,6 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("429"));
+        assert!(err.contains("qwen"));
     }
 }

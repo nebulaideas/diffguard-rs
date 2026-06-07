@@ -1,36 +1,31 @@
-//! DeepSeek LLM provider implementation.
+//! Kimi (Moonshot AI) LLM provider implementation.
 //!
-//! Communicates with the DeepSeek chat completions API using an
-//! OpenAI-compatible request format.
+//! Communicates with the Kimi chat completions API using an
+//! OpenAI-compatible request format with `reasoning_content` support.
 
 use crate::error::DiffguardError;
 use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatRequest, LlmProvider};
 use async_trait::async_trait;
 
-/// Default DeepSeek API base URL.
-const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
+/// Default Kimi API base URL.
+const DEFAULT_BASE_URL: &str = "https://api.moonshot.ai/v1";
 
-/// Default model identifier for DeepSeek.
-const DEFAULT_MODEL: &str = "deepseek-v4-flash";
+/// Default model identifier for Kimi.
+const DEFAULT_MODEL: &str = "kimi-k2.5";
 
-/// Client for the DeepSeek chat completions API.
+/// Client for the Kimi chat completions API.
 #[derive(Debug, Clone)]
-pub struct DeepSeekClient {
+pub struct KimiClient {
     base_url: String,
     model: String,
     max_tokens: Option<u32>,
     client: reqwest::Client,
 }
 
-impl DeepSeekClient {
-    /// Creates a new DeepSeek client with the given API key.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API key contains invalid header characters
-    /// or if the HTTP client cannot be built.
+impl KimiClient {
+    /// Creates a new Kimi client with the given API key.
     pub fn new(api_key: impl Into<String>) -> Result<Self, DiffguardError> {
-        let client = build_llm_client("deepseek", &api_key.into(), &[])?;
+        let client = build_llm_client("kimi", &api_key.into(), &[])?;
         Ok(Self {
             base_url: DEFAULT_BASE_URL.to_string(),
             model: DEFAULT_MODEL.to_string(),
@@ -59,9 +54,9 @@ impl DeepSeekClient {
 }
 
 #[async_trait]
-impl LlmProvider for DeepSeekClient {
+impl LlmProvider for KimiClient {
     fn name(&self) -> &'static str {
-        "deepseek"
+        "kimi"
     }
 
     async fn chat_completion(
@@ -78,7 +73,7 @@ impl LlmProvider for DeepSeekClient {
         };
 
         let url = format!("{}/chat/completions", self.base_url);
-        send_chat_request(&self.client, &url, &request, "deepseek").await
+        send_chat_request(&self.client, &url, &request, "kimi").await
     }
 }
 
@@ -97,14 +92,14 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
                     "message": {
-                        "content": "This looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
+                        "content": "Looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
                     }
                 }]
             })))
             .mount(&mock_server)
             .await;
 
-        let client = DeepSeekClient::new("test-key")
+        let client = KimiClient::new("test-key")
             .unwrap()
             .with_base_url(mock_server.uri());
         let result = client
@@ -125,7 +120,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let client = DeepSeekClient::new("test-key")
+        let client = KimiClient::new("test-key")
             .unwrap()
             .with_base_url(mock_server.uri());
         let result = client
@@ -135,5 +130,34 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("429"));
+        assert!(err.contains("kimi"));
+    }
+
+    #[tokio::test]
+    async fn test_reasoning_content_parsed() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{
+                    "message": {
+                        "content": "Final answer.",
+                        "reasoning_content": "Let me think..."
+                    }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = KimiClient::new("test-key")
+            .unwrap()
+            .with_base_url(mock_server.uri());
+        let result = client
+            .chat_completion("You are a reviewer.", "diff content", 0.1)
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Final answer.");
     }
 }
