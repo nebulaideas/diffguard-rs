@@ -1,0 +1,36 @@
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  diffguard-review:
+    name: diffguard-rs Review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download diffguard
+        run: |
+          curl -L -o diffguard \
+            https://github.com/nebulaideas/diffguard-rs/releases/latest/download/diffguard
+          chmod +x diffguard
+
+      - name: Run diffguard review
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO_FULL_NAME: ${{ github.repository }}
+        run: ./diffguard
+
+      - name: Upload review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-result
+          path: review-result.txt

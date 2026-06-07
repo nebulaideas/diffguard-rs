@@ -12,44 +12,82 @@
 
 ## Architecture
 
-### Workspace Structure
+### Repository Structure
+
+**Phase 1 (Current): Single Crate**
 
 ```
 diffguard-rs/
-|-- Cargo.toml                    # Workspace manifest
-|-- Cargo.lock
-|-- deny.toml                     # cargo-deny: license + security audit
-|-- .rustfmt.toml                 # Formatting config
-|-- .gitignore
-|-- README.md                     # Quick start + badges
-|-- CHANGELOG.md                  # Version history
-|-- CONTRIBUTING.md               # Dev guidelines
-|-- CODE_OF_CONDUCT.md
-|-- SECURITY.md
-|-- LICENSE                       # Apache-2.0
-|
-|-- crates/
-|   |-- diffguard-core/           # Diff fetch, verdict parser, GitHub API
-|   |-- diffguard-llm/            # LlmProvider trait + provider impls
-|   |-- diffguard-cli/            # CLI args, config, main flow
-|
-|-- examples/
-|   |-- github-actions-workflow/  # Sample consumer workflows
-|   |-- local-review/             # Pre-commit hook examples
-|   |-- custom-provider/          # Per-provider config examples
-|
-|-- benches/                       # Performance benchmarks
-|-- tests/                         # Integration tests + test data
-|-- docs/                          # Extended documentation
-|-- .github/workflows/             # CI/CD pipelines
+├── Cargo.toml                    # Single crate manifest
+├── Cargo.lock
+├── deny.toml                     # cargo-deny: license + security audit
+├── .rustfmt.toml                 # Formatting config
+├── .gitignore
+├── README.md                     # Quick start + badges
+├── CHANGELOG.md                  # Version history
+├── CONTRIBUTING.md               # Dev guidelines
+├── CODE_OF_CONDUCT.md
+├── SECURITY.md
+├── LICENSE                       # MIT (see License Note below)
+│
+├── src/                          # Single crate source
+│   ├── main.rs                   # CLI entry point
+│   ├── cli.rs                    # Clap argument parsing
+│   ├── config.rs                 # Env vars + .reviewer.toml parsing
+│   ├── diff.rs                   # PR diff fetching + local diff
+│   ├── llm/                      # LLM provider modules
+│   │   ├── mod.rs                # LlmProvider trait + types
+│   │   ├── deepseek.rs           # DeepSeek provider (Phase 1)
+│   │   ├── kimi.rs               # Kimi provider (Phase 2)
+│   │   ├── qwen.rs               # Qwen provider (Phase 2)
+│   │   ├── openrouter.rs         # OpenRouter provider (Phase 2)
+│   │   ├── openai.rs             # Generic OpenAI provider (Phase 2)
+│   │   └── factory.rs            # Provider factory (Phase 2)
+│   ├── verdict.rs                # Verdict parsing + review state logic
+│   ├── github.rs                 # GitHub API review submission
+│   ├── output.rs                 # Terminal output + artifact writing
+│   └── error.rs                  # Error types
+│
+├── examples/
+│   ├── github-actions-workflow/  # Sample consumer workflows
+│   ├── local-review/             # Pre-commit hook examples
+│   └── custom-provider/          # Per-provider config examples (Phase 2)
+│
+├── benches/                       # Performance benchmarks (Phase 3)
+├── tests/                         # Integration tests + test data
+│   ├── verdict_tests.rs
+│   ├── diff_tests.rs
+│   ├── provider_tests.rs
+│   └── test_data/
+├── docs/                          # Extended documentation
+│   ├── PROVIDERS.md               # Phase 2
+│   ├── CONFIGURATION.md           # Phase 2
+│   ├── LOCAL_MODE.md              # Phase 2
+│   ├── ARCHITECTURE.md            # Phase 4
+│   ├── USAGE.md                   # Phase 4
+│   └── API.md                     # Phase 4
+│
+└── .github/workflows/             # CI/CD pipelines
 ```
+
+**Future Reference: Multi-Crate Workspace (Phase 5+)**
+
+> If demand emerges for using `diffguard` components as libraries, the single crate can be split into a workspace:
+>
+> ```
+> crates/
+> ├── diffguard-core/           # Diff fetch, verdict parser, GitHub API
+> ├── diffguard-llm/            # LlmProvider trait + provider impls
+> └── diffguard-cli/            # CLI args, config, main flow
+> ```
+> See [Future Workspace Decomposition](#future-workspace-decomposition-reference) for migration steps.
 
 ### Core Flow
 
-```
+```mermaid
 [Fetch PR Diff] --(GitHub API)--> [Call LLM] --(DeepSeek/Kimi/Qwen/etc.)-->
 [Parse Response In-Memory] --> [Extract Metadata Block] --> [Determine State]
---> [Submit Review via gh pr review] --> [Dismiss Old Blockers if needed]
+--> [Submit Review via GitHub API] --> [Dismiss Old Blockers if needed]
 ```
 
 ### Provider Support Roadmap
@@ -77,126 +115,196 @@ diffguard-rs/
 
 ---
 
-## Phase 1: Foundation — Workspace + DeepSeek MVP
+## Phase 1: Foundation — Single Crate + DeepSeek MVP
 
 ### Goal
-Create the repository structure with a Cargo workspace, implement the core modules (diff fetching, verdict parsing, error handling), and wire the first LLM provider (DeepSeek) into a working CLI binary that runs in GitHub Actions.
+
+Create a working Rust CLI in a single crate: fetch PR diffs, call DeepSeek, parse verdicts, submit reviews to GitHub. All other providers and advanced features are deferred.
 
 ### Deliverables
 
 #### Repository Setup
-- [ ] Initialize Git repository with proper `.gitignore` for Rust
-- [ ] Create workspace `Cargo.toml` with `[workspace.dependencies]` for shared crates
-- [ ] Create `.rustfmt.toml` with project formatting rules
-- [ ] Create `deny.toml` for `cargo-deny` license + security auditing
+
+- [x] Initialize Git repository with proper `.gitignore` for Rust
+- [x] Create `Cargo.toml` with dependencies for single crate:
+  - `reqwest`, `serde`, `serde_json`, `tokio`, `clap`, `anyhow`, `thiserror`, `regex`, `env_logger`, `colored`, `wiremock` (dev), `toml` (Phase 2)
+- [x] Create `.rustfmt.toml` with project formatting rules
+- [x] Create `deny.toml` for `cargo-deny` license + security auditing (includes `Unicode-3.0` license allowance)
 - [ ] Add root-level docs: `README.md` (skeleton), `LICENSE`, `CODE_OF_CONDUCT.md`, `SECURITY.md`
 
-#### Crate: `diffguard-core`
-- [ ] Create crate manifest with dependencies: `reqwest`, `serde`, `thiserror`, `regex`
-- [ ] `src/error.rs` — Define `DiffguardError` enum with variants:
-  - `GitHubApi { status: u16, message: String }`
-  - `LlmApi { provider: String, status: u16, message: String }`
-  - `VerdictParse(String)`
-  - `Config(String)`
-  - `Io(std::io::Error)`
-- [ ] `src/diff.rs` — Implement `fetch_pr_diff()`:
-  - HTTP GET to `https://api.github.com/repos/{owner}/{repo}/pulls/{number}`
-  - Header: `Accept: application/vnd.github.v3.diff`
-  - Header: `Authorization: Bearer {GITHUB_TOKEN}`
-  - Header: `X-GitHub-Api-Version: 2022-11-28`
-  - Return `String` or `DiffguardError::GitHubApi`
-  - Handle empty diff gracefully (warning log + early exit)
-- [ ] `src/verdict.rs` — Implement verdict parsing:
-  - `parse_metadata_block(response: &str) -> Option<Verdict>`
-  - Regex: `\[OPENCODE_VERDICT_METADATA\][\s\S]*?Verdict:\s*(\w+)[\s\S]*?CriticalBugs:\s*(\d+)[\s\S]*?SecurityIssues:\s*(\d+)`
-  - `determine_review_state(verdict: &Verdict) -> ReviewState`
-  - Logic: `NEGATIVE || security > 0 || critical > 2` => `REQUEST_CHANGES`
-  - Logic: `critical == 0 && security == 0` => `APPROVE`
-  - Else => `COMMENT`
-  - Fallback: `evaluate_by_tags(response: &str) -> Verdict` — counts `[Critical Bug]` and `[Security]` occurrences
-- [ ] `src/github.rs` — Implement GitHub review submission:
-  - `submit_review(pr_number: u64, state: ReviewState, message: &str)` — executes `gh pr review {n} --{state} -b "{msg}"`
-  - `dismiss_previous_reviews(pr_number: u64)` — queries bot reviews with `CHANGES_REQUESTED` state and dismisses them
-  - Permission fallback: if `--request-changes` or `--approve` fails with permission error, retry with `--comment` and prepend `[Bot fallback from {state}]`
-- [ ] `src/output.rs` — Artifact + console output:
-  - `write_artifact(content: &str, path: &str)` — writes `review-result.txt`
-  - `print_colored_report(review: &str, state: &ReviewState)` — terminal output for local mode (Phase 2)
+#### Single Crate Structure
 
-#### Crate: `diffguard-llm`
-- [ ] Create crate manifest with dependencies: `reqwest`, `serde`, `serde_json`, `tokio`, `async-trait`, `thiserror`
-- [ ] `src/lib.rs` — Define `LlmProvider` trait:
-  ```rust
-  #[async_trait]
-  pub trait LlmProvider: Send + Sync {
-      async fn chat_completion(
-          &self,
-          system_prompt: &str,
-          user_message: &str,
-          temperature: f32,
-      ) -> Result<String, LlmError>;
-  }
-  ```
-- [ ] `src/types.rs` — Shared types: `ChatMessage`, `ChatRequest`, `ChatResponse`, `LlmError`
-- [ ] `src/deepseek.rs` — DeepSeek provider implementation:
-  - Base URL: `https://api.deepseek.com`
-  - Endpoint: `POST /chat/completions`
-  - Model default: `deepseek-v4-flash`
-  - Temperature default: `0.1`
-  - Request body: OpenAI-compatible `messages` array with `system` + `user` roles
-  - Response parsing: extract `choices[0].message.content`
+**`src/retry.rs`** — Basic retry logic:
+- `with_retry<T, F, Fut>(operation: F) -> Result<T, DiffguardError>`
+- Retry on: HTTP 429, 502, 503, 504, timeout errors
+- Strategy: 2 retries with fixed backoff (1s, 2s)
+- Never retry: 401/403, 404, parse errors, config errors
+- All public items have `///` doc comments
 
-#### Crate: `diffguard-cli`
-- [ ] Create crate manifest with dependencies: `clap`, `tokio`, `anyhow`, `colored`
-- [ ] `src/cli.rs` — Clap derive struct:
-  ```rust
-  #[derive(Parser)]
-  pub struct Args {
-      #[arg(short, long, default_value = ".github/review-prompt.md")]
-      pub prompt_file: PathBuf,
-      
-      #[arg(short, long, default_value = "deepseek-v4-flash")]
-      pub model: String,
-      
-      #[arg(short, long, default_value_t = 0.1)]
-      pub temperature: f32,
-      
-      #[arg(long, env = "DIFFGUARD_PROVIDER", default_value = "deepseek")]
-      pub provider: String,
-  }
-  ```
-- [ ] `src/config.rs` — Environment variable resolution:
-  - `DEEPSEEK_API_KEY` (required for DeepSeek)
-  - `GITHUB_TOKEN` (required for GitHub mode)
-  - `PR_NUMBER` (required for GitHub mode)
-  - `REPO_FULL_NAME` (required for GitHub mode)
-  - `GITHUB_ACTIONS` (auto-detected for CI vs local mode)
-- [ ] `src/main.rs` — Entry point:
-  - Parse CLI args with Clap
-  - Detect CI mode: `std::env::var("GITHUB_ACTIONS").is_ok()`
-  - CI mode: fetch PR diff → call LLM → parse verdict → submit review → dismiss old blockers → write artifact
-  - Error handling: `anyhow::Context` for human-readable error messages
-  - Exit codes: `0` for success, `1` for any error
+**`src/error.rs`** — Define `DiffguardError` enum with variants:
+- `GitHubApi { status: u16, message: String }`
+- `LlmApi { provider: String, status: u16, message: String }`
+- `VerdictParse(String)`
+- `Config(String)`
+- `Io(std::io::Error)`
+- `DiffTooLarge { size_bytes: usize, line_count: usize }`
+- `EmptyDiff`
+- `PermissionDenied { state: String, message: String }`
+- Helper methods: `is_retryable()`, `is_permission_denied()`
+- All public items have `///` doc comments
 
-#### Tests
-- [ ] `crates/diffguard-core/tests/verdict_tests.rs` — Unit tests for all verdict parsing scenarios (see test matrix in analysis doc)
-- [ ] `crates/diffguard-core/tests/diff_tests.rs` — Mock HTTP tests for diff fetching (use `wiremock`)
-- [ ] `crates/diffguard-llm/tests/provider_tests.rs` — Mock DeepSeek API responses
+**`src/diff.rs`** — Implement `fetch_pr_diff()` and `fetch_local_diff()`:
+- `fetch_pr_diff(base_url, owner, repo, pr_number, token)` — configurable `base_url` for GitHub Enterprise support
+- HTTP GET with `Accept: application/vnd.github.v3.diff`
+- `github_headers(token)` helper validates token format via `HeaderValue::from_str` (returns `Config` error instead of panicking)
+- Return `DiffResult { content: String, size_bytes: usize, line_count: usize }` or `DiffguardError::GitHubApi`
+- Handle empty diff gracefully (`DiffguardError::EmptyDiff`)
+- Size guard: if diff exceeds 100KB or 1,500 lines, return `DiffguardError::DiffTooLarge`
+- `fetch_local_diff()` — executes `git diff --cached` subprocess for local mode
+- All public items have `///` doc comments
+
+**`src/verdict.rs`** — Implement verdict parsing:
+- `parse_metadata_block(response: &str) -> Option<Verdict>`
+- Regex compiled once via `std::sync::LazyLock` (avoids recompilation per call)
+- `determine_review_state(verdict: &Verdict) -> ReviewState`
+- Logic: `NEGATIVE || security > 0 || critical > 2` => `REQUEST_CHANGES`
+- Logic: `critical == 0 && security == 0` => `APPROVE`
+- Else => `COMMENT`
+- Fallback: `evaluate_by_tags(response: &str) -> Verdict` — counts `[Critical Bug]` and `[Security]` occurrences
+- All public items have `///` doc comments
+
+**`src/github.rs`** — Implement GitHub review submission:
+- `submit_review(base_url, owner, repo, pr_number, state, message, token)` — configurable `base_url` for GitHub Enterprise
+- `dismiss_previous_reviews(base_url, owner, repo, pr_number, token)` — queries reviews with `CHANGES_REQUESTED` state and bodies containing `<!-- diffguard-bot -->` signature, then dismisses them
+- Permission fallback: if `REQUEST_CHANGES` or `APPROVE` fails with permission error, retry with `COMMENT` and prepend `[Bot fallback from {state}]`
+- `github_headers(token)` helper validates token format (returns `Config` error instead of panicking)
+- Individual dismissal failures are logged as warnings (not silently swallowed)
+- All public items have `///` doc comments
+
+**`src/output.rs`** — Artifact + console output:
+- `ARTIFACT_FILENAME` constant (`"review-result.txt"`)
+- `write_artifact(review, verdict, state, config, path)` — writes structured artifact
+- `print_colored_report(review, verdict, state)` — terminal output with verdict metadata included
+- `print_colored_summary(review, verdict, state, config)` — full summary with provider metadata
+- All public items have `///` doc comments
+
+**`src/llm/mod.rs`** — LLM provider types + enum dispatch:
+- Phase 1 uses enum-based dispatch (`Provider` enum with match arms) instead of a trait object
+- The `LlmProvider` trait is deferred to Phase 2 when multiple providers require dynamic dispatch
+- Shared types: `ChatMessage`, `ChatRequest`, `ChatResponse`, `LlmError`
+- All public items have `///` doc comments
+
+**`src/llm/deepseek.rs`** — DeepSeek provider implementation:
+- Base URL: `https://api.deepseek.com`
+- Endpoint: `POST /chat/completions`
+- Model default: `deepseek-v4-flash`
+- Temperature default: `0.1`
+- `DeepSeekClient::new(api_key)` returns `Result<Self, DiffguardError>` (validates API key format, no panics)
+- Builder methods: `with_base_url()`, `with_model()`
+- Request body: OpenAI-compatible `messages` array with `system` + `user` roles
+- Response parsing: extract `choices[0].message.content`
+- All public items have `///` doc comments
+
+**`src/llm/factory.rs`** — Provider factory:
+- `create_provider(provider_name, api_key) -> Result<Provider, DiffguardError>`
+- Propagates `DeepSeekClient::new()` errors (invalid API key format)
+- All public items have `///` doc comments
+
+**`src/cli.rs`** — Clap derive struct:
+```rust
+#[derive(Parser)]
+pub struct Args {
+    #[arg(short, long, default_value = ".github/review-prompt.md")]
+    pub prompt_file: PathBuf,
+    
+    #[arg(short, long, default_value = "deepseek-v4-flash")]
+    pub model: String,
+    
+    #[arg(short, long, default_value_t = 0.1)]
+    pub temperature: f32,
+    
+    #[arg(long, env = "DIFFGUARD_PROVIDER", default_value = "deepseek")]
+    pub provider: String,
+}
+```
+- Note: `--config` / `-c` flag deferred to Phase 2 (TOML parsing not yet implemented)
+- All public items have `///` doc comments
+
+**`src/config.rs`** — Environment variable resolution + default prompt:
+- `DEEPSEEK_API_KEY` (required for DeepSeek)
+- `GITHUB_TOKEN` (required for GitHub mode)
+- `PR_NUMBER` (required for GitHub mode)
+- `REPO_FULL_NAME` (required for GitHub mode)
+- `GITHUB_ACTIONS` (auto-detected for CI vs local mode)
+- Embedded default prompt: used when `--prompt-file` is not found or not specified
+- `Config::from_env()` — resolves all env vars, returns `Result`
+- `Config::apply_args(&mut self, args: &Args)` — applies CLI flag overrides for `model`, `temperature`, `provider`
+- `Config::load_prompt_file()` — loads prompt from file or keeps default
+- `Config::validate_for_ci()` — validates required CI fields are present
+- `Config::github_base_url` — configurable GitHub API base URL (default: `https://api.github.com`)
+- All public items have `///` doc comments
+
+**Default Prompt Template (embedded in binary):**
+```markdown
+You are a senior software engineer performing a code review on a Pull Request diff.
+
+Review the provided diff carefully. Identify:
+- Critical bugs: issues that would cause runtime errors, data loss, or incorrect behavior
+- Security issues: vulnerabilities, injection risks, auth flaws, secrets exposure
+
+For each finding, explain the problem and suggest a fix.
+
+At the end of your response, include exactly this metadata block (do not modify the format):
+
+[DIFFGUARD_VERDICT_METADATA]
+Verdict: POSITIVE or NEGATIVE
+CriticalBugs: <count>
+SecurityIssues: <count>
+
+Guidelines:
+- Verdict is POSITIVE if the code is fundamentally sound and ready to merge
+- Verdict is NEGATIVE if there are serious issues that should block merging
+- CriticalBugs: count of bugs that would cause incorrect behavior in production
+- SecurityIssues: count of security vulnerabilities or risks
+```
+
+**`src/main.rs`** — Entry point:
+- Parse CLI args with Clap
+- `Config::from_env()` → `config.apply_args(&args)` → `config.load_prompt_file()` → `config.validate_for_ci()`
+- `run_pipeline(config)` — extracted pipeline function for testability
+- CI mode: fetch PR diff → call LLM → parse verdict → submit review → dismiss old blockers → write artifact
+- Error handling: `anyhow::Context` for human-readable error messages
+- Exit codes: `0` for success, `1` for any error, `2` for local mode `REQUEST_CHANGES`
+- Uses `ARTIFACT_FILENAME` constant from `output` module
+
+#### Tests (Phase 1)
+
+- [x] `tests/verdict_tests.rs` — 15 integration tests for all verdict parsing scenarios
+- [x] `tests/diff_tests.rs` — 4 mock HTTP tests for diff fetching (use `wiremock`)
+- [x] `tests/provider_tests.rs` — 3 tests: DeepSeek mock API, factory creation, unknown provider
+- [x] `src/retry.rs` inline tests — 3 tests: first-attempt success, eventual success, no retry on non-retryable
+- [x] `src/verdict.rs` inline tests — 7 tests for metadata parsing and tag fallback
+- [x] `src/diff.rs` inline tests — 2 tests for PR diff fetching
+- [x] `src/llm/deepseek.rs` inline tests — 2 tests for chat completion
 - [ ] Integration test: full pipeline with mock GitHub + mock LLM servers
 
-#### CI Setup
-- [ ] `.github/workflows/ci.yml`:
+#### CI Setup (Phase 1)
+
+- [x] `.github/workflows/ci.yml`:
   - Format check: `cargo fmt --all -- --check`
-  - Lint: `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-  - Unit + integration tests: `cargo test --workspace`
-  - Doc tests: `cargo test --doc --workspace`
-  - Coverage: `cargo tarpaulin --workspace --out xml` + upload to Codecov
-  - Doc coverage: `cargo +nightly doc --show-coverage` (parse and enforce 85% threshold)
-  - Release build smoke: `cargo build --release -p diffguard-cli`
-- [ ] `.github/workflows/release.yml`:
+  - Lint: `cargo clippy --all-targets --all-features -- -D warnings`
+  - Unit + integration tests: `cargo test`
+  - Doc tests: `cargo test --doc`
+  - Release build smoke: `cargo build --release`
+  - `cargo-deny`: license + security audit via `EmbarkStudios/cargo-deny-action@v1`
+  - `cargo-audit`: vulnerability scanning
+  - Coverage: `cargo tarpaulin --workspace --out xml` + upload to Codecov (deferred)
+  - Doc coverage: `cargo +nightly doc --show-coverage` (deferred)
+- [x] `.github/workflows/release.yml`:
   - Trigger: push tags `v*`
-  - Build: `cargo build --release -p diffguard-cli --target x86_64-unknown-linux-gnu`
+  - Build: `cargo build --release --target x86_64-unknown-linux-gnu`
   - Strip binary for size reduction
-  - Create GitHub Release with binary asset
+  - Create GitHub Release with binary asset via `softprops/action-gh-release@v2`
 
 ### Test Matrix for Phase 1
 
@@ -210,11 +318,14 @@ Create the repository structure with a Cargo workspace, implement the core modul
 | Tag fallback | `[Critical Bug] x3` | `ReviewState::RequestChanges` |
 | Clean tag fallback | No tags found | `ReviewState::Comment` |
 | Empty diff | GitHub returns 200 + empty | Graceful warning, exit 0 |
+| Diff too large | Diff exceeds 100KB or 1,500 lines | Submit comment explaining limit, exit 0 |
 | GitHub 404 | PR doesn't exist | Error with PR number in message |
 | GitHub 429 | Rate limited | Retry with backoff or clear error |
-| DeepSeek timeout | No response in 60s | Error, no review submitted |
+| DeepSeek timeout | No response in 60s | Retry once, then error |
+| GitHub 429 | Rate limited | Retry twice with 1s/2s backoff |
+| GitHub 503 | Transient outage | Retry twice with 1s/2s backoff |
 
-### Changelog Entry
+### Changelog Entry — Phase 1
 
 ```markdown
 ## [0.1.0] — 2026-06-XX
@@ -222,14 +333,15 @@ Create the repository structure with a Cargo workspace, implement the core modul
 ### Added
 - Initial release with DeepSeek provider support (`deepseek-v4-flash`)
 - GitHub Actions integration: fetches PR diffs and submits review states
-- In-memory verdict parsing (`[OPENCODE_VERDICT_METADATA]` block)
+- In-memory verdict parsing (`[DIFFGUARD_VERDICT_METADATA]` block)
 - Three review states: `APPROVE`, `REQUEST_CHANGES`, `COMMENT`
 - Permission fallback: downgrades to `COMMENT` when approval/rejection is not permitted
-- Dismissal of previous bot `CHANGES_REQUESTED` reviews when new state is non-blocking
+- Dismissal of previous diffguard `CHANGES_REQUESTED` reviews (identified by `<!-- diffguard-bot -->` HTML comment signature) when new state is non-blocking
 - `review-result.txt` artifact for downstream jobs
-- Configurable system prompts via `--prompt-file` flag
+- Embedded default prompt (works out-of-the-box; override via `--prompt-file`)
 - `--model` and `--temperature` CLI flags
-- Workspace structure with 3 crates: `diffguard-core`, `diffguard-llm`, `diffguard-cli`
+- Single crate architecture (lean MVP — workspace deferred until library demand emerges)
+- Basic retry logic for transient API failures (429, 502, 503, 504, timeouts)
 - Comprehensive test suite (unit + integration) with mock HTTP servers
 - CI pipeline: format, clippy, test, coverage, doc coverage, release build
 - `cargo-deny` license and security auditing
@@ -237,44 +349,59 @@ Create the repository structure with a Cargo workspace, implement the core modul
 
 ---
 
-## Phase 2: Multi-Provider Support
+## Phase 2: Multi-Provider Support + Local Mode
 
 ### Goal
-Extend `diffguard-llm` to support multiple LLM providers through the existing `LlmProvider` trait. Add Kimi, Qwen, OpenRouter, and generic OpenAI support. Introduce `.reviewer.toml` configuration and implement local pre-commit execution mode.
+
+Extend `src/llm/` to support multiple LLM providers. Add `.reviewer.toml` configuration and implement local pre-commit execution mode.
 
 ### Deliverables
 
 #### Provider Implementations
-- [ ] `crates/diffguard-llm/src/kimi.rs` — Kimi/Moonshot AI provider:
+
+> **Note:** Phase 1 uses enum-based dispatch (`Provider` enum). In Phase 2, introduce the `LlmProvider` async trait and refactor `Provider` to use `Box<dyn LlmProvider>` for dynamic dispatch across multiple providers.
+
+- [ ] `src/llm/kimi.rs` — Kimi/Moonshot AI provider:
   - Base URL: `https://api.moonshot.ai/v1`
   - Auth header: `Bearer {KIMI_API_KEY}`
   - OpenAI-compatible schema with `reasoning_content` field support
   - Default model: `kimi-k2.5`
-- [ ] `crates/diffguard-llm/src/qwen.rs` — Qwen/Alibaba Cloud provider:
+  - Client struct: `KimiClient { api_key: String, base_url: String }`
+
+- [ ] `src/llm/qwen.rs` — Qwen/Alibaba Cloud provider:
   - Base URL: `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
   - Auth header: `Bearer {DASHSCOPE_API_KEY}`
   - Requires `result_format: "message"` for some models
   - Default model: `qwen-plus`
-- [ ] `crates/diffguard-llm/src/openrouter.rs` — OpenRouter gateway:
+  - Client struct: `QwenClient { api_key: String, base_url: String }`
+
+- [ ] `src/llm/openrouter.rs` — OpenRouter gateway:
   - Base URL: `https://openrouter.ai/api/v1`
   - Auth header: `Bearer {OPENROUTER_API_KEY}`
   - Additional headers: `HTTP-Referer`, `X-Title` for attribution
   - Supports routing to any model via OpenRouter's unified API
-- [ ] `crates/diffguard-llm/src/openai.rs` — Generic OpenAI-compatible provider:
+  - Client struct: `OpenRouterClient { api_key: String, base_url: String, http_referer: String }`
+
+- [ ] `src/llm/openai.rs` — Generic OpenAI-compatible provider:
   - Base URL: `https://api.openai.com/v1` (configurable)
   - Auth header: `Bearer {OPENAI_API_KEY}`
   - Default model: `gpt-4o-mini`
   - Catch-all for any OpenAI-compatible endpoint
+  - Client struct: `OpenAiClient { api_key: String, base_url: String }`
 
 #### Provider Factory
-- [ ] `crates/diffguard-llm/src/factory.rs` — `create_provider(provider_name: &str, api_key: &str) -> Box<dyn LlmProvider>`:
-  - Matches provider name to implementation
-  - Returns boxed trait object for dynamic dispatch
+
+- [ ] `src/llm/factory.rs` — `create_provider(provider_name: &str, api_key: &str) -> Provider`:
+  - Matches provider name to enum variant
+  - Returns `Provider::DeepSeek(...)`, `Provider::Kimi(...)`, etc.
   - Validates that required API key environment variable is set
 
 #### Configuration File Support
-- [ ] `crates/diffguard-cli/src/config.rs` — TOML configuration:
+
+- [ ] `src/config.rs` — TOML configuration:
+  - Add `--config` / `-c` CLI flag to `src/cli.rs` (deferred from Phase 1)
   - Parse `.reviewer.toml` from repository root
+  - `Config::apply_args()` already handles CLI overrides; extend to merge TOML values
   - Schema:
     ```toml
     provider = "deepseek"
@@ -307,6 +434,7 @@ Extend `diffguard-llm` to support multiple LLM providers through the existing `L
   - Environment variables override both
 
 #### Local Mode (Pre-commit)
+
 - [ ] Detect local execution: `GITHUB_ACTIONS` env var is absent
 - [ ] `src/diff.rs` — Local diff source: execute `git diff --cached` subprocess
 - [ ] Skip GitHub API calls in local mode
@@ -316,15 +444,16 @@ Extend `diffguard-llm` to support multiple LLM providers through the existing `L
   - Print metadata block extract
 - [ ] Exit behavior:
   - `exit(0)` if `ReviewState::Approve` or `ReviewState::Comment`
-  - `exit(1)` if `ReviewState::RequestChanges` — aborts the commit
+  - `exit(2)` if `ReviewState::RequestChanges` — aborts the commit
 - [ ] `examples/local-review/pre-commit-hook.sh` — Example git hook script
 
-#### Documentation
+#### Documentation (Phase 2)
+
 - [ ] `docs/PROVIDERS.md` — Per-provider setup guide with API key acquisition instructions
 - [ ] `docs/CONFIGURATION.md` — Complete `.reviewer.toml` reference
 - [ ] `docs/LOCAL_MODE.md` — Pre-commit hook setup and local usage
 
-### Changelog Entry
+### Changelog Entry — Phase 2
 
 ```markdown
 ## [0.2.0] — 2026-07-XX
@@ -343,7 +472,7 @@ Extend `diffguard-llm` to support multiple LLM providers through the existing `L
 - `docs/PROVIDERS.md`, `docs/CONFIGURATION.md`, `docs/LOCAL_MODE.md`
 
 ### Changed
-- `diffguard-llm` crate restructured with provider-per-module pattern
+- `src/llm/` restructured with provider-per-module pattern
 - CLI argument parsing extended with provider selection
 - Configuration resolution: CLI flags > env vars > TOML file > defaults
 ```
@@ -353,17 +482,20 @@ Extend `diffguard-llm` to support multiple LLM providers through the existing `L
 ## Phase 3: Advanced Features
 
 ### Goal
+
 Add production-hardening features: diff chunking for large PRs, response caching, cost/latency metrics, and enhanced CI pipeline features.
 
 ### Deliverables
 
 #### Diff Chunking
+
 - [ ] Detect diff size against model context window
 - [ ] Truncation strategy: preserve first N and last N lines, summarize middle section with placeholder
 - [ ] Configurable `max_tokens` in `.reviewer.toml`
 - [ ] Warning when diff is truncated (included in review comment)
 
 #### Response Caching
+
 - [ ] Cache LLM responses by diff content hash (SHA-256)
 - [ ] Cache location: `~/.cache/diffguard/responses/` or project-local `.diffguard/cache/`
 - [ ] TTL: 24 hours by default, configurable
@@ -371,6 +503,7 @@ Add production-hardening features: diff chunking for large PRs, response caching
 - [ ] Cache hit logged in CI output for transparency
 
 #### Metrics Export
+
 - [ ] Track per-run metrics: token usage (input/output), API latency, cost estimate
 - [ ] Export as JSON artifact: `diffguard-metrics.json`
 - [ ] Console summary in CI logs:
@@ -388,6 +521,7 @@ Add production-hardening features: diff chunking for large PRs, response caching
   ```
 
 #### Enhanced CI Pipeline
+
 - [ ] `.github/workflows/ci.yml` additions:
   - `cargo-deny check` for license + security audit
   - `cargo-audit` for vulnerability scanning
@@ -395,13 +529,14 @@ Add production-hardening features: diff chunking for large PRs, response caching
 - [ ] `.github/workflows/docs-deploy.yml` — Deploy `cargo doc` to GitHub Pages
 
 #### Error Recovery
+
 - [ ] Retry logic for transient failures (5xx, 429):
   - Exponential backoff: 1s, 2s, 4s, 8s
   - Max 3 retries per request
   - Jitter to avoid thundering herd
 - [ ] Circuit breaker pattern: skip LLM call if provider has failed N times recently
 
-### Changelog Entry
+### Changelog Entry — Phase 3
 
 ```markdown
 ## [0.3.0] — 2026-08-XX
@@ -427,11 +562,13 @@ Add production-hardening features: diff chunking for large PRs, response caching
 ## Phase 4: README + Documentation Polish
 
 ### Goal
+
 Create a world-class README and complete all documentation files. This is the public-facing quality gate before crates.ai registration.
 
 ### Deliverables
 
 #### README.md (Complete Rewrite)
+
 - [ ] **Hero section**: One-sentence description + animated GIF or screenshot of terminal output
 - [ ] **Badges**: CI status, test coverage, docs.rs, crates.io version, license
 - [ ] **Quick Start** (3-step copy-paste):
@@ -458,9 +595,10 @@ Create a world-class README and complete all documentation files. This is the pu
 - [ ] **Provider setup**: Quick links to `docs/PROVIDERS.md`
 - [ ] **Architecture**: Brief overview + link to `docs/ARCHITECTURE.md`
 - [ ] **Contributing**: Link to `CONTRIBUTING.md`
-- [ ] **License**: Apache-2.0 badge + full text link
+- [ ] **License**: MIT badge + full text link
 
 #### docs/ARCHITECTURE.md
+
 - [ ] System design overview with diagrams (ASCII or mermaid)
 - [ ] In-memory pipeline explanation (why no intermediate comments)
 - [ ] Provider trait design and extension guide
@@ -469,6 +607,7 @@ Create a world-class README and complete all documentation files. This is the pu
 - [ ] Performance characteristics: latency breakdown, memory usage, binary size
 
 #### docs/USAGE.md
+
 - [ ] Complete CLI reference with all flags and environment variables
 - [ ] Exit codes reference table
 - [ ] GitHub Actions integration guide with full workflow YAML
@@ -477,15 +616,17 @@ Create a world-class README and complete all documentation files. This is the pu
 - [ ] Troubleshooting section: common errors and solutions
 
 #### docs/API.md
-- [ ] Library crate API documentation for `diffguard-core` and `diffguard-llm`
-- [ ] Examples of using crates as libraries in other Rust projects
+
+- [ ] Library crate API documentation (if workspace split occurred, otherwise module-level docs)
+- [ ] Examples of using modules as libraries in other Rust projects
 - [ ] Provider trait implementation guide for custom providers
 
 #### CHANGELOG.md Update
+
 - [ ] Ensure all versions follow [Keep a Changelog](https://keepachangelog.com/) format
 - [ ] Add `[Unreleased]` section for work in progress
 
-### Changelog Entry
+### Changelog Entry — Phase 4
 
 ```markdown
 ## [0.4.0] — 2026-08-XX
@@ -494,7 +635,7 @@ Create a world-class README and complete all documentation files. This is the pu
 - Complete README.md with quick-start, badges, feature highlights, and usage examples
 - `docs/ARCHITECTURE.md` — System design and extension guide
 - `docs/USAGE.md` — Full CLI reference and troubleshooting
-- `docs/API.md` — Library crate API documentation
+- `docs/API.md` — Library module API documentation
 - GitHub Pages documentation site auto-deployment
 
 ### Changed
@@ -504,9 +645,10 @@ Create a world-class README and complete all documentation files. This is the pu
 
 ---
 
-## Phase 5: implementation-guide.md
+## Phase 5: Implementation Guide
 
 ### Goal
+
 Create a comprehensive developer-facing guide that documents how the project is built, how to extend it, and the architectural decisions behind key design choices. This is the "how and why" companion to the user-facing documentation.
 
 ### Deliverables
@@ -517,29 +659,31 @@ Create a comprehensive developer-facing guide that documents how the project is 
 - [ ] Development environment setup: Rust toolchain (1.82+), required components (`clippy`, `rustfmt`)
 - [ ] `cargo` commands for daily development:
   ```bash
-  cargo build --workspace
-  cargo test --workspace
-  cargo clippy --workspace --all-targets --all-features -- -D warnings
+  cargo build
+  cargo test
+  cargo clippy --all-targets --all-features -- -D warnings
   cargo fmt --all
-  cargo doc --workspace --no-deps --open
+  cargo doc --no-deps --open
   ```
-- [ ] Running integration tests: `cargo test --workspace -- --ignored` for tests requiring network
+- [ ] Running integration tests: `cargo test -- --ignored` for tests requiring network
 - [ ] Using `cargo-tarpaulin` for coverage reports locally
 
-**2. Workspace Organization**
-- [ ] Rationale for 3-crate structure vs single crate or more granular decomposition
-- [ ] Dependency flow: `diffguard-cli` depends on both `diffguard-core` and `diffguard-llm`; `diffguard-core` is independent; `diffguard-llm` is independent
-- [ ] Adding a new crate to the workspace (checklist)
+**2. Crate Organization**
+- [ ] Rationale for single-crate structure vs workspace (see [Architecture Decision](#why-single-crate-for-mvp))
+- [ ] Module dependency flow: `main.rs` → `cli.rs` + `config.rs`; `diff.rs` + `github.rs` + `verdict.rs` + `llm/` as core pipeline
+- [ ] When and how to split into a workspace (see [Future Workspace Decomposition](#future-workspace-decomposition-reference))
 
 **3. Adding a New LLM Provider**
 - [ ] Step-by-step guide:
-  1. Create `crates/diffguard-llm/src/{provider}.rs`
-  2. Implement `LlmProvider` trait
-  3. Add API key env var constant
-  4. Register in `factory.rs`
-  5. Add TOML config schema in `config.rs`
-  6. Add unit tests with mock responses
-  7. Update `docs/PROVIDERS.md`
+  1. Create `src/llm/{provider}.rs`
+  2. Implement `{Provider}Client` struct with `chat_completion` method
+  3. Add `Provider::{Provider}` variant in `src/llm/mod.rs`
+  4. Add match arm in `Provider::chat_completion()`
+  5. Add API key env var constant
+  6. Register in `src/llm/factory.rs`
+  7. Add TOML config schema in `src/config.rs`
+  8. Add unit tests with mock responses
+  9. Update `docs/PROVIDERS.md`
 - [ ] Provider implementation checklist with code review criteria
 
 **4. The In-Memory Pipeline**
@@ -571,11 +715,11 @@ Create a comprehensive developer-facing guide that documents how the project is 
 - [ ] Supply chain security: `cargo-deny`, `cargo-audit`, `Cargo.lock`
 
 **9. Common Tasks**
-- [ ] Bumping the version: update workspace `Cargo.toml`, update `CHANGELOG.md`, tag and push
+- [ ] Bumping the version: update `Cargo.toml`, update `CHANGELOG.md`, tag and push
 - [ ] Adding a new CLI flag: update `cli.rs`, `config.rs`, `main.rs`, `docs/USAGE.md`
 - [ ] Debugging a failing review: enable `RUST_LOG=debug`, check `review-result.txt`
 
-### Changelog Entry
+### Changelog Entry — Phase 5
 
 ```markdown
 ## [0.5.0] — 2026-09-XX
@@ -594,19 +738,20 @@ Create a comprehensive developer-facing guide that documents how the project is 
 ## Phase 6: crates.ai Registration
 
 ### Goal
+
 Register diffguard-rs on [crates.ai](https://crates.ai) for discovery and distribution as a Rust crate, and optionally publish to [crates.io](https://crates.io) for `cargo install` support.
 
 ### Prerequisites Checklist
 
 Before registration, all of the following must be complete:
-- [ ] All crates in workspace have proper `Cargo.toml` metadata:
+- [ ] `Cargo.toml` has proper metadata:
   - `name`, `version`, `authors`, `edition`, `license`, `description`, `repository`, `keywords`, `categories`
 - [ ] `README.md` is complete and professional
 - [ ] `CHANGELOG.md` has at least one released version
-- [ ] `LICENSE` file present at root (Apache-2.0)
+- [ ] `LICENSE` file present at root (MIT)
 - [ ] All public API items have doc comments (`#![deny(missing_docs)]`)
-- [ ] `cargo test --workspace` passes 100%
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes
+- [ ] `cargo test` passes 100%
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt --check` passes
 - [ ] `cargo deny check` passes (license + security)
 - [ ] `cargo audit` passes (no known vulnerabilities)
@@ -618,9 +763,9 @@ Before registration, all of the following must be complete:
 ### crates.ai Registration Steps
 
 1. **Create a crates.ai account** at https://crates.ai (uses GitHub OAuth)
-2. **Register the workspace**:
+2. **Register the repository**:
    - Submit the GitHub repository URL
-   - crates.ai scans the `Cargo.toml` workspace manifest
+   - crates.ai scans the `Cargo.toml`
    - Verifies buildability and documentation
 3. **Add project metadata**:
    - Description: "AI-powered code review CLI for GitHub PRs. Multi-provider LLM support with in-memory verdict parsing."
@@ -633,48 +778,80 @@ Before registration, all of the following must be complete:
 
 ### crates.io Publishing (Optional but Recommended)
 
-If publishing to crates.io for `cargo install diffguard-cli`:
+If publishing to crates.io for `cargo install diffguard`:
 
-1. **Verify each crate's `Cargo.toml`**:
+1. **Verify `Cargo.toml`**:
    ```toml
    [package]
-   name = "diffguard-cli"
+   name = "diffguard"
    version = "0.5.0"
    edition = "2021"
    authors = ["Your Name <email@example.com>"]
-   license = "Apache-2.0"
+   license = "MIT"
    description = "AI-powered code review CLI for GitHub PRs"
    repository = "https://github.com/YOUR_ORG/diffguard-rs"
    homepage = "https://github.com/YOUR_ORG/diffguard-rs"
-   documentation = "https://docs.rs/diffguard-cli"
-   readme = "../../README.md"
+   documentation = "https://docs.rs/diffguard"
+   readme = "README.md"
    keywords = ["ai", "code-review", "github", "llm", "cli"]
    categories = ["development-tools", "command-line-utilities"]
    ```
 2. **Login and publish**:
    ```bash
    cargo login  # paste API key from crates.io
-   cd crates/diffguard-core && cargo publish
-   cd ../diffguard-llm && cargo publish
-   cd ../diffguard-cli && cargo publish
+   cargo publish
    ```
-3. **Note**: Publish in dependency order (core first, then llm, then cli)
 
-### Changelog Entry
+### Changelog Entry — Phase 6
 
 ```markdown
 ## [0.6.0] — 2026-09-XX
 
 ### Added
 - Registered on crates.ai for project discovery
-- Published to crates.io: `cargo install diffguard-cli`
-- All workspace crates published with proper metadata
+- Published to crates.io: `cargo install diffguard`
 - docs.rs documentation auto-generated and linked
 
 ### Changed
-- `Cargo.toml` metadata finalized for all crates
+- `Cargo.toml` metadata finalized
 - `README.md` includes `cargo install` instructions
 ```
+
+---
+
+## Reference: Future Workspace Decomposition
+
+> **When to split:** Only if concrete demand emerges for using `diffguard` components as standalone libraries (e.g., another project wants to import just the LLM provider trait, or just the verdict parser).
+>
+> **Migration steps:**
+> 1. Create workspace `Cargo.toml` with `[workspace.members]`
+> 2. Extract `src/llm/` → `crates/diffguard-llm/src/`
+> 3. Extract `src/diff.rs`, `src/verdict.rs`, `src/github.rs`, `src/output.rs`, `src/error.rs` → `crates/diffguard-core/src/`
+> 4. Keep `src/main.rs`, `src/cli.rs`, `src/config.rs` → `crates/diffguard-cli/src/`
+> 5. Add `diffguard-core` and `diffguard-llm` as path dependencies in `diffguard-cli/Cargo.toml`
+> 6. Use `[workspace.dependencies]` to share common crate versions
+> 7. Update all `use` statements and test imports
+> 8. Update CI to use `--workspace` flag
+>
+> **Why we didn't start here:** Workspace boundaries add friction to early iteration. Internal APIs change frequently during MVP development. Crate-splitting is easy to do later and hard to undo if done too early.
+
+---
+
+## Reference: Why Single Crate for MVP
+
+**Decision:** Start as a single crate. Defer workspace split until library demand is proven.
+
+**Rationale:**
+- **Faster iteration:** No cross-crate compilation boundaries; refactoring is a single `cargo check`
+- **Simpler testing:** Unit tests can access private modules via `#[cfg(test)]`; no need to expose internals prematurely
+- **Less boilerplate:** One `Cargo.toml`, one version to bump, no workspace dependency management
+- **YAGNI:** No identified consumer needs `diffguard-llm` or `diffguard-core` as independent libraries yet
+- **Easy to split later:** Moving modules between crates is a well-understood Rust refactoring; the reverse is painful
+
+**When to revisit:** If any of the following happen:
+- Another project wants to depend on `diffguard` LLM providers as a library
+- The CLI binary and library logic need independent versioning
+- Compile times become a bottleneck due to crate size (unlikely for this scope)
 
 ---
 
@@ -700,8 +877,8 @@ If publishing to crates.io for `cargo install diffguard-cli`:
 | `--model` | `-m` | (provider-specific) | LLM model identifier |
 | `--temperature` | `-t` | `0.1` | Sampling temperature (0.0 - 2.0) |
 | `--provider` | | `deepseek` | LLM provider to use |
-| `--config` | `-c` | `.reviewer.toml` | Path to configuration TOML file |
-| `--no-cache` | | | Bypass response cache |
+| `--config` | `-c` | `.reviewer.toml` | Path to configuration TOML file (Phase 2) |
+| `--no-cache` | | | Bypass response cache (Phase 3) |
 | `--help` | `-h` | | Display help |
 | `--version` | `-V` | | Display version |
 
@@ -710,8 +887,8 @@ If publishing to crates.io for `cargo install diffguard-cli`:
 | Code | Meaning |
 |---|---|
 | `0` | Review completed successfully |
-| `1` | Error occurred (API failure, parse error, etc.) |
-| `1` | Local mode: review returned `REQUEST_CHANGES` (blocks commit) |
+| `1` | Error occurred (API failure, parse error, config error, etc.) |
+| `2` | Local mode only: review returned `REQUEST_CHANGES` (blocks commit) |
 
 ## Appendix D: Review State Logic
 
@@ -724,4 +901,17 @@ else:
     state = COMMENT
 ```
 
+### Design Rationale: Asymmetric Safety Model
+
+The logic intentionally treats the LLM's pessimism as authoritative but its optimism as conditional:
+
+- **Pessimistic signals are always trusted:** A `NEGATIVE` verdict, any security issue, or >2 critical bugs always results in `REQUEST_CHANGES`. These are signals we never want to ignore.
+- **Optimistic signals require clean counts:** A `POSITIVE` verdict only yields `APPROVE` when both `CriticalBugs == 0` and `SecurityIssues == 0`. If the LLM is positive but reports minor bugs (1–2 critical), the state is `COMMENT` — a human can still approve, but we don't auto-approve questionable code.
+
+**Why asymmetric?** It's safer. A false `APPROVE` lets bugs slip through. A false `COMMENT` just means a human takes a second look. This behavior should be documented in `README.md` and `docs/ARCHITECTURE.md`.
+
 If `REQUEST_CHANGES` or `APPROVE` fails due to GitHub permissions, fallback to `COMMENT`.
+
+## Appendix E: License Note
+
+The root `LICENSE` file is **MIT** (Copyright 2026 Nebula Ideas). Earlier versions of this plan referenced Apache-2.0; the root `LICENSE` file takes precedence. If you wish to change the license, update both the `LICENSE` file and `Cargo.toml` `license` field before publishing.
