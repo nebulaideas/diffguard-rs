@@ -58,7 +58,7 @@ pub async fn run_pipeline(
                 diff
             }
             Err(e) => {
-                if let crate::error::DiffguardError::DiffTooLarge {
+                if let crate::error::RsGuardError::DiffTooLarge {
                     size_bytes,
                     line_count,
                 } = &e
@@ -69,7 +69,7 @@ pub async fn run_pipeline(
                     );
                     return Ok(PipelineResult::Success);
                 }
-                if let crate::error::DiffguardError::EmptyDiff = &e {
+                if let crate::error::RsGuardError::EmptyDiff = &e {
                     eprintln!("ℹ️  Diff file is empty: {}", path);
                     return Ok(PipelineResult::Success);
                 }
@@ -78,10 +78,21 @@ pub async fn run_pipeline(
         }
     } else if config.is_ci {
         log::info!("CI mode detected. Fetching PR diff...");
-        let owner = config.repo_owner.as_ref().unwrap();
-        let repo = config.repo_name.as_ref().unwrap();
-        let pr = config.pr_number.unwrap();
-        let token = config.github_token.as_ref().unwrap();
+        let owner = config
+            .repo_owner
+            .as_ref()
+            .expect("repo_owner validated in validate_for_ci()");
+        let repo = config
+            .repo_name
+            .as_ref()
+            .expect("repo_name validated in validate_for_ci()");
+        let pr = config
+            .pr_number
+            .expect("pr_number validated in validate_for_ci()");
+        let token = config
+            .github_token
+            .as_ref()
+            .expect("github_token validated in validate_for_ci()");
 
         match fetch_pr_diff(&base_url, owner, repo, pr, token).await {
             Ok(diff) => {
@@ -94,7 +105,7 @@ pub async fn run_pipeline(
                 diff
             }
             Err(e) => {
-                if let crate::error::DiffguardError::DiffTooLarge {
+                if let crate::error::RsGuardError::DiffTooLarge {
                     size_bytes,
                     line_count,
                 } = &e
@@ -105,7 +116,7 @@ pub async fn run_pipeline(
                         line_count
                     );
                     let msg = format!(
-                        "⚠️ **diffguard-rs**: This PR diff exceeds the review size limit ({} lines / {} bytes).\n\n\
+                        "⚠️ **rs-guard**: This PR diff exceeds the review size limit ({} lines / {} bytes).\n\n\
                         The diff is too large for an effective AI review. Consider breaking this PR into smaller, focused changes.",
                         line_count, size_bytes
                     );
@@ -122,7 +133,7 @@ pub async fn run_pipeline(
                     .context("Failed to submit size-limit comment")?;
                     return Ok(PipelineResult::Success);
                 }
-                if let crate::error::DiffguardError::EmptyDiff = &e {
+                if let crate::error::RsGuardError::EmptyDiff = &e {
                     log::warn!("PR diff is empty — nothing to review.");
                     return Ok(PipelineResult::Success);
                 }
@@ -142,7 +153,7 @@ pub async fn run_pipeline(
                 diff
             }
             Err(e) => {
-                if let crate::error::DiffguardError::DiffTooLarge {
+                if let crate::error::RsGuardError::DiffTooLarge {
                     size_bytes,
                     line_count,
                 } = &e
@@ -153,7 +164,7 @@ pub async fn run_pipeline(
                     );
                     return Ok(PipelineResult::Success);
                 }
-                if let crate::error::DiffguardError::EmptyDiff = &e {
+                if let crate::error::RsGuardError::EmptyDiff = &e {
                     eprintln!("ℹ️  No staged changes to review.");
                     return Ok(PipelineResult::Success);
                 }
@@ -234,6 +245,13 @@ pub async fn run_pipeline(
     log::info!("Received LLM response ({} chars)", llm_response.len());
     log_redacted("LLM response", &llm_response);
 
+    if llm_response.trim().len() < 10 {
+        log::warn!(
+            "LLM response is suspiciously short ({} chars), may indicate an API error",
+            llm_response.len()
+        );
+    }
+
     let (verdict, state) =
         parse_verdict(&llm_response).context("Failed to parse verdict from LLM response")?;
 
@@ -268,8 +286,8 @@ pub async fn run_pipeline(
     let metrics = ReviewMetrics {
         provider: config.provider.clone(),
         model: config.model.clone(),
-        tokens_in: estimated_tokens_in,
-        tokens_out: estimated_tokens_out,
+        estimated_tokens_in,
+        estimated_tokens_out,
         latency_secs: latency.as_secs_f64(),
         estimated_cost_cents,
         diff_lines: diff_result.line_count,
@@ -278,16 +296,27 @@ pub async fn run_pipeline(
     };
 
     let metrics_path =
-        std::env::var("DIFFGUARD_METRICS_PATH").unwrap_or_else(|_| METRICS_FILENAME.to_string());
+        std::env::var("RS_GUARD_METRICS_PATH").unwrap_or_else(|_| METRICS_FILENAME.to_string());
     if let Err(e) = write_metrics(&metrics, &metrics_path) {
         log::warn!("Failed to write metrics: {}", e);
     }
 
     if config.is_ci {
-        let owner = config.repo_owner.as_ref().unwrap();
-        let repo = config.repo_name.as_ref().unwrap();
-        let pr = config.pr_number.unwrap();
-        let token = config.github_token.as_ref().unwrap();
+        let owner = config
+            .repo_owner
+            .as_ref()
+            .expect("repo_owner validated in validate_for_ci()");
+        let repo = config
+            .repo_name
+            .as_ref()
+            .expect("repo_name validated in validate_for_ci()");
+        let pr = config
+            .pr_number
+            .expect("pr_number validated in validate_for_ci()");
+        let token = config
+            .github_token
+            .as_ref()
+            .expect("github_token validated in validate_for_ci()");
 
         let review_body = if was_chunked {
             format!(
@@ -320,12 +349,12 @@ pub async fn run_pipeline(
             }
         }
 
-        println!("diffguard-rs Review Complete");
+        println!("rs-guard Review Complete");
         println!("============================");
         println!("Provider:    {}", config.provider);
         println!("Model:       {}", config.model);
-        println!("Tokens In:   {}", estimated_tokens_in);
-        println!("Tokens Out:  {}", estimated_tokens_out);
+        println!("Est. Tokens In:  {}", estimated_tokens_in);
+        println!("Est. Tokens Out: {}", estimated_tokens_out);
         println!("Latency:     {:.1}s", latency.as_secs_f64());
         println!("Est. Cost:   ${:.4}", estimated_cost_cents as f64 / 100.0);
         println!("Diff Lines:  {}", diff_result.line_count);

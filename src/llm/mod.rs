@@ -4,7 +4,7 @@
 //! requests to supported LLM backends, along with shared request/response types
 //! and a common HTTP helper for provider implementations.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use async_trait::async_trait;
 use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,7 @@ pub struct ChatResponse {
 
 /// Async trait for LLM provider implementations.
 ///
-/// All providers must implement this trait to participate in the diffguard
+/// All providers must implement this trait to participate in the rs-guard
 /// pipeline. Implementations are expected to handle HTTP communication,
 /// authentication, and response parsing.
 #[async_trait]
@@ -89,7 +89,7 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
         system_prompt: &str,
         user_message: &str,
         temperature: f32,
-    ) -> Result<String, DiffguardError>;
+    ) -> Result<String, RsGuardError>;
 }
 
 /// Dynamic-dispatch handle for an LLM provider.
@@ -128,14 +128,14 @@ pub struct ProviderConfig {
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::LlmApi`] on network errors, non-success HTTP
+/// Returns [`RsGuardError::LlmApi`] on network errors, non-success HTTP
 /// status codes, or response parsing failures.
 pub(crate) async fn send_chat_request<B: Serialize + Send>(
     client: &reqwest::Client,
     url: &str,
     request: &B,
     provider_name: &str,
-) -> Result<String, DiffguardError> {
+) -> Result<String, RsGuardError> {
     log::debug!(
         "[{}] POST {} (effective params logged at debug level)",
         provider_name,
@@ -236,9 +236,9 @@ pub struct LlmError {
     pub message: String,
 }
 
-impl From<LlmError> for DiffguardError {
+impl From<LlmError> for RsGuardError {
     fn from(err: LlmError) -> Self {
-        DiffguardError::LlmApi {
+        RsGuardError::LlmApi {
             provider: err.provider,
             status: err.status,
             message: err.message,
@@ -275,18 +275,18 @@ pub(crate) fn chat_messages(system_prompt: &str, user_message: &str) -> Vec<Chat
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the API key or extra header values
+/// Returns [`RsGuardError::Config`] if the API key or extra header values
 /// contain invalid HTTP header characters.
 pub(crate) fn build_llm_client(
     provider_name: &str,
     api_key: &str,
     extra_headers: &[(&str, &str)],
-) -> Result<reqwest::Client, DiffguardError> {
+) -> Result<reqwest::Client, RsGuardError> {
     let mut headers = HeaderMap::new();
     headers.insert(
         header::AUTHORIZATION,
         HeaderValue::from_str(&format!("Bearer {}", api_key)).map_err(|e| {
-            DiffguardError::Config(format!("Invalid {} API key format: {}", provider_name, e))
+            RsGuardError::Config(format!("Invalid {} API key format: {}", provider_name, e))
         })?,
     );
     headers.insert(
@@ -295,7 +295,7 @@ pub(crate) fn build_llm_client(
     );
     for &(name, value) in extra_headers {
         let h_name = header::HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
-            DiffguardError::Config(format!(
+            RsGuardError::Config(format!(
                 "Invalid header name '{}' for {}: {}",
                 name, provider_name, e
             ))
@@ -303,7 +303,7 @@ pub(crate) fn build_llm_client(
         headers.insert(
             h_name,
             HeaderValue::from_str(value).map_err(|e| {
-                DiffguardError::Config(format!(
+                RsGuardError::Config(format!(
                     "Invalid header '{}' value for {}: {}",
                     name, provider_name, e
                 ))
@@ -315,7 +315,7 @@ pub(crate) fn build_llm_client(
         .default_headers(headers)
         .timeout(LLM_REQUEST_TIMEOUT)
         .build()
-        .map_err(|e| DiffguardError::Config(format!("Failed to build HTTP client: {}", e)))
+        .map_err(|e| RsGuardError::Config(format!("Failed to build HTTP client: {}", e)))
 }
 
 #[cfg(test)]

@@ -9,14 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Ongoing work and future enhancements
+- 33 new tests: `fetch_local_diff`, `load_prompt_file`, `validate_for_ci` edge cases, CRLF
+  chunk diffing, `is_retryable`/`is_permission_denied` unit tests, corrupted cache file tests
+- Auto-creation of parent directories before artifact and metrics file writes
+- Temperature validation for env/TOML sources (was previously only validated for CLI)
+
+### Changed
+
+- CI pipeline now uses `cargo run --release --quiet` for binary execution (resilient to
+  package name changes on base branch)
+- Factory error message derived from `providers.rs` metadata (single source of truth)
+- `ReviewMetrics.tokens_in/out` renamed to `estimated_tokens_in/out` for clarity
+- `main.rs` error handling DRY'd with `exit_on_error()` helper
+- Release workflow: added `publish-crates` job for automatic crates.io publishing via
+  `CRATES_TOKEN` secret
+
+### Improved
+
+- **Benchmarks:** `parse_metadata_block` is 2x faster (635ns → 326ns) and
+  `parse_large_response` (10KB) is 10x faster (3.86µs → 361ns) by replacing the
+  regex-based metadata parser with manual substring scanning
+- Cache temp files use a monotonic counter for uniqueness (prevents concurrent write
+  collisions on macOS)
+- Error response bodies preserved when diagnostic info is available (replaced
+  `unwrap_or_default()` with readable fallback text)
+- CI-mode `unwrap()` calls replaced with `expect("validated in validate_for_ci()")` for
+  clear failure messages
+
+### Fixed
+
+- 5 `cargo doc` intra-doc link warnings (private const references in public docs)
+- Dead test fixture removed (`tests/test_data/sample_diff.diff`)
+- Wrong metadata marker in test data (`DIFFGUARD` → `RS_GUARD`)
+- Trailing-slash inconsistency in GitHub API URL construction
+- Silent DeepSeek model fallback replaced with explicit `expect()` (guaranteed to succeed
+  due to earlier validation)
+- Missing `# Errors` docs on provider `new()` methods (kimi, qwen, openrouter, openai)
 
 ## [0.6.0] — 2026-06-XX
 
 ### Added
 
 - Registered on crates.ai for project discovery
-- Published to crates.io: `cargo install diffguard`
+- Published to crates.io: `cargo install rs-guard`
 - docs.rs documentation auto-generated and linked
 
 ### Changed
@@ -48,15 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Response caching** (`src/cache.rs`): SHA-256 keyed LLM response cache in `.diffguard/cache/`
+- **Response caching** (`src/cache.rs`): SHA-256 keyed LLM response cache in `.rs-guard/cache/`
   - Cache key combines diff content, prompt, provider, model, and temperature — all parameters matter
   - Timestamps stored in file content (line 1), not mtime — reliable across clock changes and file copies
   - Atomic writes via temp-file-then-rename — prevents partial reads by concurrent processes
   - Configurable TTL (default: 24 hours) and max size (default: 100 MB) with LRU cleanup
-  - Auto-adds `.diffguard/cache/` to `.gitignore` on first use
+  - Auto-adds `.rs-guard/cache/` to `.gitignore` on first use
   - `--no-cache` flag to bypass cache and force a fresh LLM API call
   - 13 inline unit tests
-- **Metrics export** (`diffguard-metrics.json`): per-run JSON artifact with token counts, latency, cost estimate, verdict, and state
+- **Metrics export** (`rs-guard-metrics.json`): per-run JSON artifact with token counts, latency, cost estimate, verdict, and state
   - CI summary printed to stdout: provider, model, tokens in/out, latency, estimated cost, diff lines, verdict, state
   - Cost estimation in integer cents (avoids floating point precision issues)
 - **Error recovery** (`src/retry.rs`): exponential backoff retry + optional circuit breaker
@@ -83,7 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `pipeline.rs`: cache check inserted before LLM call; response cached after successful LLM call
-- `pipeline.rs`: metrics collected and written to `diffguard-metrics.json` on every run
+- `pipeline.rs`: metrics collected and written to `rs-guard-metrics.json` on every run
 - `pipeline.rs`: `PipelineResult` enum replaces `process::exit()` — enables integration testing without process termination
 - `output.rs` print functions refactored to `impl Write` parameter — enables buffer-based testing
 - `output.rs`: added `write_metrics()` for JSON metrics artifact
@@ -147,10 +182,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release with DeepSeek provider support (`deepseek-v4-flash`)
 - GitHub Actions integration: fetches PR diffs and submits review states
-- In-memory verdict parsing (`[DIFFGUARD_VERDICT_METADATA]` block)
+- In-memory verdict parsing (`[RS_GUARD_VERDICT_METADATA]` block)
 - Three review states: `APPROVE`, `REQUEST_CHANGES`, `COMMENT`
 - Permission fallback: downgrades to `COMMENT` when approval/rejection is not permitted
-- Dismissal of previous diffguard `CHANGES_REQUESTED` reviews (identified by `<!-- diffguard-bot -->` HTML comment signature) when new state is non-blocking
+- Dismissal of previous rs-guard `CHANGES_REQUESTED` reviews (identified by `<!-- rs-guard-bot -->` HTML comment signature) when new state is non-blocking
 - `review-result.txt` artifact for downstream jobs
 - Embedded default prompt (works out-of-the-box; override via `--prompt-file`)
 - `--model` and `--temperature` CLI flags

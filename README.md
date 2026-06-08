@@ -1,13 +1,13 @@
-# diffguard-rs
+# rs-guard
 
-![diffguard-rs logo](https://github.com/user-attachments/assets/afa87cb3-5046-4543-9a32-0e3f228a2e0b)
+![rs-guard logo](https://github.com/user-attachments/assets/afa87cb3-5046-4543-9a32-0e3f228a2e0b)
 
 **AI-powered code review CLI for GitHub Pull Requests.** Multi-provider LLM support, response caching, exponential backoff retry, and local pre-commit execution — all in a single Rust binary.
 
-[![CI](https://github.com/nebulaideas/diffguard-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/nebulaideas/diffguard-rs/actions/workflows/ci.yml)
+[![CI](https://github.com/nebulaideas/rs-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/nebulaideas/rs-guard/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![crates.io](https://img.shields.io/crates/v/diffguard.svg)](https://crates.io/crates/diffguard)
-[![docs.rs](https://docs.rs/diffguard/badge.svg)](https://docs.rs/diffguard)
+[![crates.io](https://img.shields.io/crates/v/rs-guard.svg)](https://crates.io/crates/rs-guard)
+[![docs.rs](https://docs.rs/rs-guard/badge.svg)](https://docs.rs/rs-guard)
 
 ---
 
@@ -30,9 +30,9 @@
 ### 1. Download the binary
 
 ```bash
-curl -L -o diffguard \
-  https://github.com/nebulaideas/diffguard-rs/releases/latest/download/diffguard
-chmod +x diffguard
+curl -L -o rs-guard \
+  https://github.com/nebulaideas/rs-guard/releases/latest/download/rs-guard
+chmod +x rs-guard
 ```
 
 ### 2. Set your API key
@@ -46,7 +46,7 @@ export DEEPSEEK_API_KEY="your-api-key"
 ```yaml
 # .github/workflows/ai-review.yml
 - name: AI Code Review
-  run: diffguard
+  run: rs-guard
   env:
     DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -60,17 +60,18 @@ See [`examples/github-actions-workflow/`](examples/github-actions-workflow/) for
 
 ## Installation
 
-### Pre-built binary
+### Pre-built binary (Recommended)
 
-Download from [GitHub Releases](https://github.com/nebulaideas/diffguard-rs/releases).
+Download from [GitHub Releases](https://github.com/nebulaideas/rs-guard/releases).
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for platform-specific instructions (Linux, macOS, Windows).
 
 ### Build from source
 
 ```bash
-git clone https://github.com/nebulaideas/diffguard-rs.git
-cd diffguard-rs
+git clone https://github.com/nebulaideas/rs-guard.git
+cd rs-guard
 cargo build --release
-# Binary at: ./target/release/diffguard
+# Binary at: ./target/release/rs-guard
 ```
 
 Requires Rust 1.82+.
@@ -78,10 +79,11 @@ Requires Rust 1.82+.
 ### cargo install
 
 ```bash
-cargo install diffguard
+cargo install rs-guard
 ```
 
-After installation, the `diffguard` binary will be available in your `~/.cargo/bin` directory.
+After installation, the `rs-guard` binary will be available in your `~/.cargo/bin` directory.
+**Note:** Requires the crate to be published on crates.io. Before publication, use "Build from source" instead.
 
 ---
 
@@ -92,7 +94,7 @@ After installation, the `diffguard` binary will be available in your `~/.cargo/b
 Auto-detected when `GITHUB_ACTIONS=true`. Fetches the PR diff from the GitHub API, sends it to the LLM, and submits an `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` review.
 
 ```bash
-diffguard --provider deepseek --model deepseek-v4-flash
+rs-guard --provider deepseek --model deepseek-v4-flash
 ```
 
 ### Local Mode (Pre-commit)
@@ -101,7 +103,7 @@ Auto-detected when `GITHUB_ACTIONS` is absent. Analyzes `git diff --cached` and 
 
 ```bash
 # Stage your changes, then:
-diffguard
+rs-guard
 
 # Bypass the review:
 git commit --no-verify
@@ -119,7 +121,7 @@ See [docs/LOCAL_MODE.md](docs/LOCAL_MODE.md) for full setup instructions.
 ### CLI Reference
 
 ```
-diffguard [OPTIONS]
+rs-guard [OPTIONS]
 
 Options:
   -p, --prompt-file <PATH>    System prompt markdown file [default: .github/review-prompt.md]
@@ -150,7 +152,13 @@ See [docs/USAGE.md](docs/USAGE.md) for the complete reference including all envi
 | `GITHUB_TOKEN` | CI mode | Auto-provided by GitHub Actions |
 | `PR_NUMBER` | CI mode | Pull request number |
 | `REPO_FULL_NAME` | CI mode | Repository in `owner/repo` format |
-| `DIFFGUARD_PROVIDER` | Optional | Override provider via env var |
+| `RS_GUARD_PROVIDER` | Optional | Override provider via env var |
+| `RS_GUARD_MODEL` | Optional | Override model via env var |
+| `RS_GUARD_TEMPERATURE` | Optional | Override temperature via env var |
+| `RS_GUARD_MAX_TOKENS` | Optional | Override max tokens via env var |
+| `RS_GUARD_DIFF_FILE` | Optional | Path to a pre-existing diff file |
+| `RS_GUARD_METRICS_PATH` | Optional | Path for the metrics JSON artifact |
+| `GITHUB_API_URL` | Optional | Custom GitHub API base URL (Enterprise) |
 
 See [docs/PROVIDERS.md](docs/PROVIDERS.md) for per-provider setup details.
 
@@ -209,7 +217,7 @@ flowchart LR
     H -->|Yes| J
     H -->|No| I[Call LLM\nwith retry]
     I --> J[Parse Verdict\nMetadata Block]
-    J --> K[Write Artifacts\nreview-result.txt\ndiffguard-metrics.json]
+    J --> K[Write Artifacts\nreview-result.txt\nrs-guard-metrics.json]
     K --> L{Mode?}
     L -->|CI| M[Submit GitHub Review\nAPPROVE / REQUEST_CHANGES / COMMENT]
     L -->|Local| N[Print Colored Summary\nExit 2 if blocked]
@@ -235,7 +243,7 @@ All LLM processing is in-memory. No intermediate comments are posted during anal
 # Build
 cargo build
 
-# Full test suite (~170 tests)
+# Full test suite (~235 tests)
 cargo test
 
 # Lint (zero warnings policy)
@@ -261,6 +269,7 @@ cargo doc --no-deps --open
 
 | Document | Description |
 |---|---|
+| [docs/INSTALLATION.md](docs/INSTALLATION.md) | **Complete installation guide** for all platforms (Linux, macOS, Windows) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, Mermaid diagrams, security model |
 | [docs/USAGE.md](docs/USAGE.md) | Full CLI reference, GitHub Actions guide, troubleshooting |
 | [docs/API.md](docs/API.md) | Module API docs, custom provider implementation guide |

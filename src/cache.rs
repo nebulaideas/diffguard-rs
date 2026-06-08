@@ -1,7 +1,7 @@
 //! Response caching for LLM results.
 //!
 //! Caches LLM responses by SHA-256 diff hash to avoid redundant API calls.
-//! Cache location: `.diffguard/cache/` (project-local).
+//! Cache location: `.rs-guard/cache/` (project-local).
 //!
 //! # Cache Format
 //!
@@ -19,15 +19,16 @@
 //! The cache has a configurable maximum size (default: 100MB). When the limit
 //! is exceeded, the oldest entries are automatically removed.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Default cache directory relative to project root.
-const DEFAULT_CACHE_DIR: &str = ".diffguard/cache";
+const DEFAULT_CACHE_DIR: &str = ".rs-guard/cache";
 
 /// Default cache TTL: 24 hours.
 const DEFAULT_TTL_SECS: u64 = 86400;
@@ -37,6 +38,8 @@ const DEFAULT_MAX_SIZE_BYTES: u64 = 100 * 1024 * 1024;
 
 /// Cache entry file extension.
 const CACHE_FILE_EXT: &str = "cache";
+
+static CACHE_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Cache configuration.
 #[derive(Debug, Clone)]
@@ -123,7 +126,7 @@ fn hash_content(content: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use diffguard::cache::diff_hash;
+/// use rs_guard::cache::diff_hash;
 /// let hash = diff_hash("diff --git a/f.rs b/f.rs");
 /// assert_eq!(hash.len(), 64);
 /// ```
@@ -148,8 +151,8 @@ impl DiffCache {
     ///
     /// # Errors
     ///
-    /// Returns [`DiffguardError::Config`] if the cache directory cannot be created.
-    pub fn new(config: CacheConfig) -> Result<Self, DiffguardError> {
+    /// Returns [`RsGuardError::Config`] if the cache directory cannot be created.
+    pub fn new(config: CacheConfig) -> Result<Self, RsGuardError> {
         let cache = Self {
             config: config.clone(),
         };
@@ -167,9 +170,9 @@ impl DiffCache {
     }
 
     /// Ensures the cache directory exists, creating it if necessary.
-    fn ensure_cache_dir(&self) -> Result<(), DiffguardError> {
+    fn ensure_cache_dir(&self) -> Result<(), RsGuardError> {
         fs::create_dir_all(&self.config.cache_dir)
-            .map_err(|e| DiffguardError::Config(format!("Failed to create cache dir: {}", e)))
+            .map_err(|e| RsGuardError::Config(format!("Failed to create cache dir: {}", e)))
     }
 
     /// Returns the current time as seconds since Unix epoch.
@@ -273,7 +276,7 @@ impl DiffCache {
     ///
     /// # Errors
     ///
-    /// Returns [`DiffguardError::Io`] if the file cannot be written.
+    /// Returns [`RsGuardError::Io`] if the file cannot be written.
     pub fn set(
         &self,
         diff_content: &str,
@@ -282,7 +285,7 @@ impl DiffCache {
         model: &str,
         temperature: f32,
         response: &str,
-    ) -> Result<(), DiffguardError> {
+    ) -> Result<(), RsGuardError> {
         if !self.config.enabled {
             return Ok(());
         }
@@ -292,12 +295,13 @@ impl DiffCache {
         let path = self.cache_path(&key_str);
 
         // Write to temp file with unique name in same directory, then atomically rename
-        // Use timestamp + random component for uniqueness to prevent symlink attacks
+        // Use timestamp + monotonic counter for uniqueness to prevent symlink attacks
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let tmp_filename = format!("{}.{}.tmp", key_str, timestamp);
+        let counter = CACHE_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let tmp_filename = format!("{}.{}.{}.tmp", key_str, timestamp, counter);
         let tmp_path = self.config.cache_dir.join(&tmp_filename);
 
         {
@@ -325,11 +329,11 @@ impl DiffCache {
     }
 
     /// Calculates the total size of all cache files.
-    fn total_size(&self) -> Result<u64, DiffguardError> {
+    fn total_size(&self) -> Result<u64, RsGuardError> {
         let mut total = 0u64;
 
         let entries = fs::read_dir(&self.config.cache_dir).map_err(|e| {
-            DiffguardError::Io(std::io::Error::other(format!(
+            RsGuardError::Io(std::io::Error::other(format!(
                 "Failed to read cache dir: {}",
                 e
             )))
@@ -347,7 +351,7 @@ impl DiffCache {
     }
 
     /// Removes the oldest cache entries until total size is under the limit.
-    fn enforce_size_limit(&self) -> Result<(), DiffguardError> {
+    fn enforce_size_limit(&self) -> Result<(), RsGuardError> {
         let total = self.total_size()?;
 
         if total <= self.config.max_size_bytes {
@@ -364,7 +368,7 @@ impl DiffCache {
         let mut files: Vec<(PathBuf, u64)> = Vec::new();
 
         let entries = fs::read_dir(&self.config.cache_dir).map_err(|e| {
-            DiffguardError::Io(std::io::Error::other(format!(
+            RsGuardError::Io(std::io::Error::other(format!(
                 "Failed to read cache dir: {}",
                 e
             )))
@@ -462,11 +466,11 @@ impl DiffCache {
     ///
     /// # Errors
     ///
-    /// Returns [`DiffguardError::Io`] if the cache directory cannot be read
+    /// Returns [`RsGuardError::Io`] if the cache directory cannot be read
     /// or files cannot be removed.
-    pub fn clear(&self) -> Result<(), DiffguardError> {
+    pub fn clear(&self) -> Result<(), RsGuardError> {
         let entries = fs::read_dir(&self.config.cache_dir).map_err(|e| {
-            DiffguardError::Io(std::io::Error::other(format!(
+            RsGuardError::Io(std::io::Error::other(format!(
                 "Failed to read cache dir: {}",
                 e
             )))
@@ -485,12 +489,12 @@ impl DiffCache {
     }
 
     /// Returns statistics about the cache.
-    pub fn stats(&self) -> Result<CacheStats, DiffguardError> {
+    pub fn stats(&self) -> Result<CacheStats, RsGuardError> {
         let mut file_count = 0u64;
         let mut total_size = 0u64;
 
         let entries = fs::read_dir(&self.config.cache_dir).map_err(|e| {
-            DiffguardError::Io(std::io::Error::other(format!(
+            RsGuardError::Io(std::io::Error::other(format!(
                 "Failed to read cache dir: {}",
                 e
             )))
@@ -580,7 +584,7 @@ mod tests {
         let gitignore_path = dir.path().join(".gitignore");
         assert!(gitignore_path.exists());
         let content = std::fs::read_to_string(&gitignore_path).unwrap();
-        assert!(content.contains(".diffguard/cache"));
+        assert!(content.contains(".rs-guard/cache"));
         let line_count_before = content.lines().count();
 
         // Second call should not duplicate the entry
@@ -613,12 +617,12 @@ mod tests {
 
         // Create .gitignore with a similar but different path
         let gitignore_path = dir.path().join(".gitignore");
-        std::fs::write(&gitignore_path, ".diffguard/cache2/").unwrap();
+        std::fs::write(&gitignore_path, ".rs-guard/cache2/").unwrap();
 
         // Should add the entry since it's not an exact match
         cache.ensure_gitignored();
         let content = std::fs::read_to_string(&gitignore_path).unwrap();
-        assert!(content.contains(".diffguard/cache"));
+        assert!(content.contains(".rs-guard/cache"));
 
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
@@ -628,7 +632,7 @@ mod tests {
     fn test_cache_disabled_never_hits() {
         let dir = tempdir().unwrap();
         let config = CacheConfig {
-            cache_dir: dir.path().join(".diffguard/cache"),
+            cache_dir: dir.path().join(".rs-guard/cache"),
             ttl: Duration::from_secs(3600),
             enabled: false,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
@@ -654,7 +658,7 @@ mod tests {
     fn test_cache_set_get_roundtrip() {
         let dir = tempdir().unwrap();
         let config = CacheConfig {
-            cache_dir: dir.path().join(".diffguard/cache"),
+            cache_dir: dir.path().join(".rs-guard/cache"),
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
@@ -685,7 +689,7 @@ mod tests {
     fn test_cache_miss_returns_none() {
         let dir = tempdir().unwrap();
         let config = CacheConfig {
-            cache_dir: dir.path().join(".diffguard/cache"),
+            cache_dir: dir.path().join(".rs-guard/cache"),
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
@@ -701,7 +705,7 @@ mod tests {
     fn test_cache_entry_expires() {
         let dir = tempdir().unwrap();
         let config = CacheConfig {
-            cache_dir: dir.path().join(".diffguard/cache"),
+            cache_dir: dir.path().join(".rs-guard/cache"),
             ttl: Duration::from_secs(0), // Zero TTL = immediately expired
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
@@ -747,7 +751,7 @@ mod tests {
     fn test_cache_set_overwrites_existing() {
         let dir = tempdir().unwrap();
         let config = CacheConfig {
-            cache_dir: dir.path().join(".diffguard/cache"),
+            cache_dir: dir.path().join(".rs-guard/cache"),
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
@@ -771,7 +775,7 @@ mod tests {
     fn test_cache_size_limit_enforcement() {
         let dir = tempdir().unwrap();
         let config = CacheConfig {
-            cache_dir: dir.path().join(".diffguard/cache"),
+            cache_dir: dir.path().join(".rs-guard/cache"),
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: 100, // Very small limit
@@ -801,7 +805,7 @@ mod tests {
     fn test_cache_clear() {
         let dir = tempdir().unwrap();
         let config = CacheConfig {
-            cache_dir: dir.path().join(".diffguard/cache"),
+            cache_dir: dir.path().join(".rs-guard/cache"),
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
@@ -828,7 +832,7 @@ mod tests {
     fn test_cache_stats() {
         let dir = tempdir().unwrap();
         let config = CacheConfig {
-            cache_dir: dir.path().join(".diffguard/cache"),
+            cache_dir: dir.path().join(".rs-guard/cache"),
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: 1000,
@@ -852,7 +856,7 @@ mod tests {
     fn test_cache_multiline_response() {
         let dir = tempdir().unwrap();
         let config = CacheConfig {
-            cache_dir: dir.path().join(".diffguard/cache"),
+            cache_dir: dir.path().join(".rs-guard/cache"),
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
@@ -868,5 +872,113 @@ mod tests {
             cache.get("key", "prompt", "deepseek", "model", 0.1),
             Some(multiline.to_string())
         );
+    }
+
+    #[test]
+    fn test_cache_corrupted_file_no_timestamp() {
+        let dir = tempdir().unwrap();
+        let config = CacheConfig {
+            cache_dir: dir.path().join(".rs-guard/cache"),
+            ttl: Duration::from_secs(3600),
+            enabled: true,
+            max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+        };
+        let cache = DiffCache::new(config).unwrap();
+
+        // Write a valid entry first
+        cache
+            .set("key", "prompt", "deepseek", "model", 0.1, "response")
+            .unwrap();
+
+        // Corrupt the cache file by overwriting with garbage
+        let key = CacheKey::new("key", "prompt", "deepseek", "model", 0.1).as_string();
+        let path = cache.cache_path(&key);
+        std::fs::write(&path, "not a valid cache entry").unwrap();
+
+        // Should return None (corrupted file treated as miss)
+        assert!(cache
+            .get("key", "prompt", "deepseek", "model", 0.1)
+            .is_none());
+    }
+
+    #[test]
+    fn test_cache_corrupted_file_invalid_timestamp() {
+        let dir = tempdir().unwrap();
+        let config = CacheConfig {
+            cache_dir: dir.path().join(".rs-guard/cache"),
+            ttl: Duration::from_secs(3600),
+            enabled: true,
+            max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+        };
+        let cache = DiffCache::new(config).unwrap();
+
+        // Write a valid entry first
+        cache
+            .set("key2", "prompt", "deepseek", "model", 0.1, "response")
+            .unwrap();
+
+        // Corrupt the timestamp
+        let key = CacheKey::new("key2", "prompt", "deepseek", "model", 0.1).as_string();
+        let path = cache.cache_path(&key);
+        std::fs::write(&path, "not-a-number\nresponse body").unwrap();
+
+        // Should return None
+        assert!(cache
+            .get("key2", "prompt", "deepseek", "model", 0.1)
+            .is_none());
+    }
+
+    #[test]
+    fn test_cache_corrupted_file_empty() {
+        let dir = tempdir().unwrap();
+        let config = CacheConfig {
+            cache_dir: dir.path().join(".rs-guard/cache"),
+            ttl: Duration::from_secs(3600),
+            enabled: true,
+            max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+        };
+        let cache = DiffCache::new(config).unwrap();
+
+        // Write a valid entry first
+        cache
+            .set("key3", "prompt", "deepseek", "model", 0.1, "response")
+            .unwrap();
+
+        // Empty the cache file
+        let key = CacheKey::new("key3", "prompt", "deepseek", "model", 0.1).as_string();
+        let path = cache.cache_path(&key);
+        std::fs::write(&path, "").unwrap();
+
+        // Should return None
+        assert!(cache
+            .get("key3", "prompt", "deepseek", "model", 0.1)
+            .is_none());
+    }
+
+    #[test]
+    fn test_cache_corrupted_file_binary_data() {
+        let dir = tempdir().unwrap();
+        let config = CacheConfig {
+            cache_dir: dir.path().join(".rs-guard/cache"),
+            ttl: Duration::from_secs(3600),
+            enabled: true,
+            max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+        };
+        let cache = DiffCache::new(config).unwrap();
+
+        // Write a valid entry first
+        cache
+            .set("key4", "prompt", "deepseek", "model", 0.1, "response")
+            .unwrap();
+
+        // Write binary data
+        let key = CacheKey::new("key4", "prompt", "deepseek", "model", 0.1).as_string();
+        let path = cache.cache_path(&key);
+        std::fs::write(&path, [0xFF, 0xFE, 0x00, 0x01, 0x02]).unwrap();
+
+        // Should return None (binary data can't be parsed as UTF-8 timestamp)
+        assert!(cache
+            .get("key4", "prompt", "deepseek", "model", 0.1)
+            .is_none());
     }
 }

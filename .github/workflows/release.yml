@@ -18,11 +18,23 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu
       - run: cargo build --release --target x86_64-unknown-linux-gnu
-      - run: strip target/x86_64-unknown-linux-gnu/release/diffguard
+      - run: strip target/x86_64-unknown-linux-gnu/release/rs-guard
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: target/x86_64-unknown-linux-gnu/release/diffguard
+          files: target/x86_64-unknown-linux-gnu/release/rs-guard
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: build-release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        run: cargo publish

@@ -4,8 +4,8 @@
 //! correctly sequences diff fetching, LLM calling, verdict parsing, and
 //! review submission.
 
-use diffguard::config::Config;
-use diffguard::pipeline::{run_pipeline, PipelineResult};
+use rs_guard::config::Config;
+use rs_guard::pipeline::{run_pipeline, PipelineResult};
 use serde_json::json;
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -41,9 +41,9 @@ fn local_config() -> Config {
 const VALID_DIFF: &str =
     "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1 +1,2 @@\n+line1\n line0";
 
-const POSITIVE_RESPONSE: &str = "Looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0";
+const POSITIVE_RESPONSE: &str = "Looks good.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0";
 
-const NEGATIVE_RESPONSE: &str = "Found issues.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalBugs: 2\nSecurityIssues: 1";
+const NEGATIVE_RESPONSE: &str = "Found issues.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalBugs: 2\nSecurityIssues: 1";
 
 #[tokio::test]
 async fn test_full_pipeline_ci_approve() {
@@ -146,7 +146,7 @@ async fn test_full_pipeline_ci_dismisses_previous_reviews() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
             "id": 1,
             "state": "CHANGES_REQUESTED",
-            "body": "Previous review\n\n<!-- diffguard-bot -->"
+            "body": "Previous review\n\n<!-- rs-guard-bot -->"
         }])))
         .mount(&github)
         .await;
@@ -215,7 +215,7 @@ async fn test_full_pipeline_empty_diff() {
 #[serial_test::serial]
 async fn test_full_pipeline_cache_hit() {
     // Clear cache before this test to ensure clean state
-    let cache_dir = std::path::Path::new(".diffguard/cache");
+    let cache_dir = std::path::Path::new(".rs-guard/cache");
     if cache_dir.exists() {
         let _ = std::fs::remove_dir_all(cache_dir);
     }
@@ -362,7 +362,7 @@ async fn test_full_pipeline_metrics_file_created() {
     // Use temp file for metrics to ensure cleanup
     let metrics_file = tempfile::NamedTempFile::new().unwrap();
     let metrics_path = metrics_file.path();
-    std::env::set_var("DIFFGUARD_METRICS_PATH", metrics_path);
+    std::env::set_var("RS_GUARD_METRICS_PATH", metrics_path);
 
     let result = run_pipeline(config, None).await;
     assert!(matches!(result, Ok(PipelineResult::Success)));
@@ -370,13 +370,13 @@ async fn test_full_pipeline_metrics_file_created() {
     // Verify metrics file contains expected fields
     let content = std::fs::read_to_string(metrics_path).unwrap();
     assert!(content.contains("provider"));
-    assert!(content.contains("tokens_in"));
-    assert!(content.contains("tokens_out"));
+    assert!(content.contains("estimated_tokens_in"));
+    assert!(content.contains("estimated_tokens_out"));
     assert!(content.contains("latency_secs"));
     assert!(content.contains("estimated_cost_cents"));
 
     // Temp file is automatically cleaned up on drop
-    std::env::remove_var("DIFFGUARD_METRICS_PATH");
+    std::env::remove_var("RS_GUARD_METRICS_PATH");
 }
 
 #[tokio::test]

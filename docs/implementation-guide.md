@@ -1,4 +1,4 @@
-# diffguard-rs — Implementation Guide
+# rs-guard — Implementation Guide
 
 How the project is built, how to extend it, and the architectural decisions behind key design choices. This is the developer-facing companion to the user-facing documentation.
 
@@ -22,7 +22,7 @@ How the project is built, how to extend it, and the architectural decisions behi
 
 ### Rust Toolchain
 
-diffguard-rs requires **Rust 1.82** or later (set in `Cargo.toml` → `rust-version = "1.82"`). Install via [rustup](https://rustup.rs):
+rs-guard requires **Rust 1.82** or later (set in `Cargo.toml` → `rust-version = "1.82"`). Install via [rustup](https://rustup.rs):
 
 ```bash
 rustup install stable
@@ -89,12 +89,12 @@ Target: **85%+ coverage**.
 
 ### Why a Single Crate
 
-diffguard-rs is a single crate with 13 public modules. This was a deliberate choice, not an oversight:
+rs-guard is a single crate with 13 public modules. This was a deliberate choice, not an oversight:
 
 - **Faster iteration.** No cross-crate compilation boundaries. Refactoring is a single `cargo check`.
 - **Simpler testing.** Unit tests access private modules via `#[cfg(test)]`. No need to expose internals prematurely.
 - **Less boilerplate.** One `Cargo.toml`, one version to bump, no workspace dependency management.
-- **YAGNI.** No identified consumer needs `diffguard-llm` or `diffguard-core` as standalone libraries.
+- **YAGNI.** No identified consumer needs `rs-guard-llm` or `rs-guard-core` as standalone libraries.
 
 The crate root (`src/lib.rs`) exposes 13 public modules:
 
@@ -132,7 +132,7 @@ graph TD
     redact["redact.rs<br/>Secret redaction"]
     retry["retry.rs<br/>Retry + circuit breaker"]
     verdict["verdict.rs<br/>Verdict parsing"]
-    error["error.rs<br/>DiffguardError enum"]
+    error["error.rs<br/>RsGuardError enum"]
 
     main --> cli
     main --> config
@@ -174,13 +174,13 @@ graph TD
 
 ### When and How to Split Into a Workspace
 
-Split into a workspace only if concrete demand emerges for using `diffguard` components as standalone libraries. The migration path:
+Split into a workspace only if concrete demand emerges for using `rs-guard` components as standalone libraries. The migration path:
 
 1. Create workspace `Cargo.toml` with `[workspace.members]`
-2. Extract `src/llm/` → `crates/diffguard-llm/src/`
-3. Extract `src/diff.rs`, `src/verdict.rs`, `src/github.rs`, `src/output.rs`, `src/error.rs` → `crates/diffguard-core/src/`
-4. Keep `src/main.rs`, `src/cli.rs`, `src/config.rs` → `crates/diffguard-cli/src/`
-5. Add `diffguard-core` and `diffguard-llm` as path dependencies in `diffguard-cli/Cargo.toml`
+2. Extract `src/llm/` → `crates/rs-guard-llm/src/`
+3. Extract `src/diff.rs`, `src/verdict.rs`, `src/github.rs`, `src/output.rs`, `src/error.rs` → `crates/rs-guard-core/src/`
+4. Keep `src/main.rs`, `src/cli.rs`, `src/config.rs` → `crates/rs-guard-cli/src/`
+5. Add `rs-guard-core` and `rs-guard-llm` as path dependencies in `rs-guard-cli/Cargo.toml`
 6. Use `[workspace.dependencies]` to share common crate versions
 7. Update all `use` statements and test imports
 8. Update CI to use `--workspace` flag
@@ -200,7 +200,7 @@ Create `src/llm/groq.rs`. The provider uses the `async_trait` crate (already in 
 ```rust
 //! Groq LLM provider implementation.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatRequest, LlmProvider};
 use async_trait::async_trait;
 
@@ -221,7 +221,7 @@ pub struct GroqClient {
 
 impl GroqClient {
     /// Creates a new Groq client with the given API key.
-    pub fn new(api_key: impl Into<String>) -> Result<Self, DiffguardError> {
+    pub fn new(api_key: impl Into<String>) -> Result<Self, RsGuardError> {
         let client = build_llm_client("groq", &api_key.into(), &[])?;
         Ok(Self {
             base_url: DEFAULT_BASE_URL.to_string(),
@@ -261,7 +261,7 @@ impl LlmProvider for GroqClient {
         system_prompt: &str,
         user_message: &str,
         temperature: f32,
-    ) -> Result<String, DiffguardError> {
+    ) -> Result<String, RsGuardError> {
         let request = ChatRequest {
             model: self.model.clone(),
             messages: chat_messages(system_prompt, user_message),
@@ -349,7 +349,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
                     "message": {
-                        "content": "Looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
+                        "content": "Looks good.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
                     }
                 }]
             })))
@@ -415,7 +415,7 @@ After implementing a new provider, verify every item:
 
 ### Why Parse Metadata In-Memory
 
-diffguard-rs processes the entire review in a single pass. The LLM returns a structured `[DIFFGUARD_VERDICT_METADATA]` block at the end of its response, which `verdict.rs` extracts in-memory.
+rs-guard processes the entire review in a single pass. The LLM returns a structured `[RS_GUARD_VERDICT_METADATA]` block at the end of its response, which `verdict.rs` extracts in-memory.
 
 This design avoids the alternative approach: posting intermediate comments during analysis. A two-step approach (analyze → post comment → parse comment) introduces:
 
@@ -449,7 +449,7 @@ flowchart TD
     L --> M["parse_verdict()<br/>Extract metadata block"]
     M --> N["redact_secrets()<br/>Strip Bearer tokens, API keys, etc."]
     N --> O["write_artifact()<br/>review-result.txt"]
-    O --> P["write_metrics()<br/>diffguard-metrics.json"]
+    O --> P["write_metrics()<br/>rs-guard-metrics.json"]
     P --> Q{"Mode?"}
     Q -->|"CI"| R["submit_review()<br/>+ dismiss_previous_reviews()"]
     Q -->|"Local"| S["print_colored_summary()"]
@@ -463,14 +463,14 @@ flowchart TD
 
 | Step | Error Type | Behavior |
 |---|---|---|
-| Config resolution | `DiffguardError::Config` | Print error + exit 1 |
-| Diff fetch (CI) | `DiffguardError::GitHubApi` | Propagate with context |
-| Diff fetch (local) | `DiffguardError::EmptyDiff` | Print info + exit 0 |
-| Diff fetch (any) | `DiffguardError::DiffTooLarge` | CI: post explanatory `COMMENT` + exit 0; Local: print warning + exit 0 |
-| LLM call | `DiffguardError::LlmApi` | Retried by `with_retry_simple()` (3 attempts with exponential backoff) |
+| Config resolution | `RsGuardError::Config` | Print error + exit 1 |
+| Diff fetch (CI) | `RsGuardError::GitHubApi` | Propagate with context |
+| Diff fetch (local) | `RsGuardError::EmptyDiff` | Print info + exit 0 |
+| Diff fetch (any) | `RsGuardError::DiffTooLarge` | CI: post explanatory `COMMENT` + exit 0; Local: print warning + exit 0 |
+| LLM call | `RsGuardError::LlmApi` | Retried by `with_retry_simple()` (3 attempts with exponential backoff) |
 | LLM call | Circuit breaker open | Infrastructure exists (`retry.rs`) but circuit breaker is not enabled for LLM calls — only retry with exponential backoff is wired |
-| Verdict parse | `DiffguardError::VerdictParse` | Propagate with context |
-| GitHub submission | `DiffguardError::PermissionDenied` | Fallback to `COMMENT` state |
+| Verdict parse | `RsGuardError::VerdictParse` | Propagate with context |
+| GitHub submission | `RsGuardError::PermissionDenied` | Fallback to `COMMENT` state |
 | Artifact write | `io::Error` | Log warning, do not fail the pipeline |
 | Metrics write | `io::Error` | Log warning, do not fail the pipeline |
 
@@ -493,7 +493,7 @@ pub enum PipelineResult {
 
 ### Unit Test Patterns
 
-diffguard-rs uses three primary unit testing patterns:
+rs-guard uses three primary unit testing patterns:
 
 #### Pure Functions
 
@@ -649,7 +649,7 @@ Triggered by pushing a `v*` tag (e.g., `v0.1.0`):
 1. Build release binary for `x86_64-unknown-linux-gnu`
 2. Strip debug symbols with `strip`
 3. Create GitHub Release via `softprops/action-gh-release@v2`
-4. Upload the `diffguard` binary as a release asset
+4. Upload the `rs-guard` binary as a release asset
 
 ```bash
 # Tag and release
@@ -662,19 +662,19 @@ git push origin v0.1.0
 Deploys `cargo doc` output to GitHub Pages on every push to `main`:
 
 1. Build docs: `cargo doc --no-deps --all-features`
-2. Add redirect: `target/doc/index.html` → `diffguard/index.html`
+2. Add redirect: `target/doc/index.html` → `rs-guard/index.html`
 3. Upload artifact + deploy via GitHub Pages
 
-The site is accessible at `https://<org>.github.io/diffguard-rs/`.
+The site is accessible at `https://<org>.github.io/rs-guard/`.
 
 ### AI Review Workflow (`.github/workflows/ai-review.yml`)
 
-This is diffguard-rs reviewing its own PRs (dogfooding):
+This is rs-guard reviewing its own PRs (dogfooding):
 
 1. Check out the PR base branch (trusted code)
 2. Build the binary from source: `cargo build --release`
 3. Fetch the PR diff via `gh pr diff`
-4. Run `./target/release/diffguard` with env vars
+4. Run `./target/release/rs-guard` with env vars
 5. Upload `review-result.txt` as a workflow artifact
 
 ### Version Tagging Strategy
@@ -690,7 +690,7 @@ This is diffguard-rs reviewing its own PRs (dogfooding):
 
 ### Why `reqwest` with `rustls-tls`
 
-diffguard-rs uses `reqwest` with the `rustls-tls` feature (not `native-tls`):
+rs-guard uses `reqwest` with the `rustls-tls` feature (not `native-tls`):
 
 - **Static binary.** `rustls-tls` compiles TLS into the binary. No system OpenSSL dependency, no dynamic linking issues in CI containers.
 - **Consistent behavior.** Same TLS stack on macOS, Linux, and Windows.
@@ -742,7 +742,7 @@ The `benches/verdict.rs` file defines 5 Criterion benchmarks covering verdict pa
 
 | Benchmark | What it measures |
 |---|---|
-| `parse_metadata_block` | Regex extraction of `[DIFFGUARD_VERDICT_METADATA]` |
+| `parse_metadata_block` | Regex extraction of `[RS_GUARD_VERDICT_METADATA]` |
 | `evaluate_by_tags` | Fallback tag counting |
 | `parse_no_metadata_fallback` | Metadata miss → tag fallback path |
 | `determine_review_state` | State determination from a `Verdict` struct |
@@ -797,7 +797,7 @@ This prevents a malicious `.reviewer.toml` from redirecting API calls (and `Auth
 
 ### GitHub Token Minimum Permissions
 
-diffguard-rs requires only `pull-requests: write` scope for the GitHub token. If the token lacks this permission, the review is automatically downgraded from `APPROVE` or `REQUEST_CHANGES` to `COMMENT`:
+rs-guard requires only `pull-requests: write` scope for the GitHub token. If the token lacks this permission, the review is automatically downgraded from `APPROVE` or `REQUEST_CHANGES` to `COMMENT`:
 
 ```rust
 // In github.rs — permission fallback
@@ -875,7 +875,7 @@ let client = build_github_http_client(Duration::from_secs(config.timeout_secs))?
 Enable debug logging to see every HTTP request, response, and cache interaction:
 
 ```bash
-RUST_LOG=debug diffguard --provider deepseek
+RUST_LOG=debug rs-guard --provider deepseek
 ```
 
 Check the artifact file for the full LLM response (with secrets redacted):
@@ -887,13 +887,13 @@ cat review-result.txt
 Check the metrics file for token usage, latency, and cost:
 
 ```bash
-cat diffguard-metrics.json
+cat rs-guard-metrics.json
 ```
 
 If the pipeline fails in CI, check the GitHub Actions log. Key log lines include:
 
 ```
-[INFO] diffguard-rs starting (provider: deepseek, model: deepseek-v4-flash)
+[INFO] rs-guard starting (provider: deepseek, model: deepseek-v4-flash)
 [INFO] CI mode detected. Fetching PR diff...
 [INFO] Fetched diff: 42 lines (1234 bytes)
 [INFO] Calling deepseek (deepseek-v4-flash)...
@@ -907,7 +907,7 @@ If the pipeline fails in CI, check the GitHub Actions log. Key log lines include
 There is no CLI flag for clearing the cache. Manually delete the cache directory:
 
 ```bash
-rm -rf .diffguard/cache/
+rm -rf .rs-guard/cache/
 ```
 
 Or use `--no-cache` on a per-run basis to bypass the cache for a single invocation.

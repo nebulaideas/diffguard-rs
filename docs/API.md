@@ -1,4 +1,4 @@
-# diffguard-rs — API Reference
+# rs-guard — API Reference
 
 Library module API documentation, key types reference, and custom provider implementation guide.
 
@@ -24,7 +24,7 @@ src/
 ├── cli.rs           # Clap argument parsing
 ├── config.rs        # Resolved configuration
 ├── diff.rs          # Diff fetching + chunking
-├── error.rs         # DiffguardError enum
+├── error.rs         # RsGuardError enum
 ├── github.rs        # GitHub review submission
 ├── http.rs          # HTTP utilities + URL validation
 ├── llm/
@@ -86,8 +86,8 @@ pub struct Config {
 ```rust
 pub struct Verdict {
     pub verdict: String,      // "POSITIVE" or "NEGATIVE"
-    pub critical_bugs: usize,
-    pub security_issues: usize,
+    pub critical_bugs: u32,
+    pub security_issues: u32,
 }
 
 pub enum ReviewState {
@@ -130,7 +130,7 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
         system_prompt: &str,
         user_message: &str,
         temperature: f32,
-    ) -> Result<String, DiffguardError>;
+    ) -> Result<String, RsGuardError>;
 }
 ```
 
@@ -155,7 +155,7 @@ pub struct ProviderConfig {
 
 | Item | Description |
 |---|---|
-| `parse_verdict(response: &str)` | Extracts `[DIFFGUARD_VERDICT_METADATA]` block and returns `(Verdict, ReviewState)` |
+| `parse_verdict(response: &str)` | Extracts `[RS_GUARD_VERDICT_METADATA]` block and returns `(Verdict, ReviewState)` |
 | `Verdict` | Review verdict with bug/security counts |
 | `ReviewState` | `Approve` / `RequestChanges` / `Comment` |
 | `evaluate_by_tags(response: &str)` | Tag-based fallback for when metadata block is missing |
@@ -210,13 +210,13 @@ pub struct ProviderConfig {
 | `DiffCache::get()` | Check cache by key hash |
 | `DiffCache::set()` | Store response atomically |
 | `DiffCache::enforce_size_limit()` | LRU cleanup if exceeded max size |
-| `DiffCache::ensure_gitignored()` | Adds `.diffguard/cache/` to `.gitignore` |
+| `DiffCache::ensure_gitignored()` | Adds `.rs-guard/cache/` to `.gitignore` |
 
 ### `retry`
 
 | Item | Description |
 |---|---|
-| `with_retry(operation)` | Retries on transient errors with exponential backoff |
+| `with_retry(operation, circuit: Option<&CircuitBreaker>)` | Retries on transient errors with exponential backoff |
 | `CircuitBreaker` | Simple Closed/Open circuit breaker |
 | `CircuitBreakerConfig` | Threshold, cooldown, and enable/disable |
 
@@ -227,19 +227,19 @@ pub struct ProviderConfig {
 | `print_colored_report(msg, verdict, state, writer)` | Print colored review summary |
 | `print_colored_summary(msg, verdict, state, config, writer)` | Full colored summary with metrics |
 | `write_artifact(msg, verdict, state, config, path)` | Write `review-result.txt` |
-| `write_metrics(metrics, path)` | Write `diffguard-metrics.json` |
+| `write_metrics(metrics, path)` | Write `rs-guard-metrics.json` |
 | `Artifact` | Struct for artifact file contents |
 | `ReviewMetrics` | JSON metrics: provider, model, tokens, latency, cost, verdict, state |
 | `ARTIFACT_FILENAME` | `"review-result.txt"` |
-| `METRICS_FILENAME` | `"diffguard-metrics.json"` |
+| `METRICS_FILENAME` | `"rs-guard-metrics.json"` |
 
 ### `error`
 
 | Item | Description |
 |---|---|
-| `DiffguardError` | Enum: `GitHubApi`, `LlmApi`, `VerdictParse`, `Config`, `Io`, `DiffTooLarge`, `EmptyDiff`, `InvalidDiffContent`, `PermissionDenied` |
-| `DiffguardError::is_retryable()` | Returns true for transient errors |
-| `DiffguardError::is_permission_denied()` | Returns true for 403 permission errors |
+| `RsGuardError` | Enum: `GitHubApi`, `LlmApi`, `VerdictParse`, `Config`, `Io`, `DiffTooLarge`, `EmptyDiff`, `InvalidDiffContent`, `PermissionDenied` |
+| `RsGuardError::is_retryable()` | Returns true for transient errors |
+| `RsGuardError::is_permission_denied()` | Returns true for 403 permission errors |
 
 ### `llm`
 
@@ -267,17 +267,17 @@ pub struct ProviderConfig {
 
 ## Using as a Library
 
-While diffguard-rs is designed as a CLI tool, internal modules are public and can be used from dependent Rust projects.
+While rs-guard is designed as a CLI tool, internal modules are public and can be used from dependent Rust projects.
 
 ### Example: Verdict Parsing
 
 ```rust
-use diffguard::verdict;
+use rs_guard::verdict;
 
 let llm_response = r#"Review of the PR:
 ... lots of analysis ...
 
-[DIFFGUARD_VERDICT_METADATA]
+[RS_GUARD_VERDICT_METADATA]
 Verdict: POSITIVE
 CriticalBugs: 0
 SecurityIssues: 0
@@ -290,7 +290,7 @@ assert_eq!(state, verdict::ReviewState::Approve);
 
 ### Example: Verdict Tag Fallback
 
-When the LLM doesn't include the structured `[DIFFGUARD_VERDICT_METADATA]` block, the parser falls back to tag counting:
+When the LLM doesn't include the structured `[RS_GUARD_VERDICT_METADATA]` block, the parser falls back to tag counting:
 
 ```rust
 let response = "Good changes!
@@ -304,7 +304,7 @@ assert_eq!(state, verdict::ReviewState::RequestChanges); // 3 critical bugs
 ### Example: Diff Chunking
 
 ```rust
-use diffguard::diff::chunk_diff;
+use rs_guard::diff::chunk_diff;
 
 let large_diff = "line 1
 line 2
@@ -323,13 +323,13 @@ if was_truncated {
 ### Example: Error Handling
 
 ```rust
-use diffguard::error::DiffguardError;
+use rs_guard::error::DiffguardError;
 
 match result {
-    Err(DiffguardError::DiffTooLarge { size_bytes, line_count }) => {
+    Err(RsGuardError::DiffTooLarge { size_bytes, line_count }) => {
         // Handle large diff specifically
     }
-    Err(DiffguardError::LlmApi { provider, status, message }) => {
+    Err(RsGuardError::LlmApi { provider, status, message }) => {
         // Handle API errors with provider context
     }
     Err(err) if err.is_retryable() => {
@@ -345,12 +345,14 @@ match result {
 
 ## Custom Provider Implementation Guide
 
+> **Note on crate-internal functions:** The helper functions `build_llm_client()`, `chat_messages()`, and `send_chat_request()` used in the example below are all `pub(crate)` — they are only accessible from within the `rs-guard` crate itself. External provider implementations (e.g., libraries that depend on `rs-guard`) must use the public [`LlmProvider`] trait directly and implement their own HTTP client logic, message construction, and request handling. The guide below shows the pattern as it exists inside the crate for maintainers adding first-party providers.
+
 Adding a new LLM provider requires changes in four locations.
 
 ### 1. Create Provider Module (`src/llm/newprovider.rs`)
 
 ```rust
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::llm::{chat_messages, build_llm_client, send_chat_request};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -366,7 +368,7 @@ struct NewProviderClient {
 }
 
 impl NewProviderClient {
-    pub fn new(api_key: &str) -> Result<Self, DiffguardError> {
+    pub fn new(api_key: &str) -> Result<Self, RsGuardError> {
         // Validate API key format
         // Build reqwest client
         let client = build_llm_client("newprovider", api_key, &[])?;
@@ -406,7 +408,7 @@ impl crate::llm::LlmProvider for NewProviderClient {
         system_prompt: &str,
         user_message: &str,
         temperature: f32,
-    ) -> Result<String, DiffguardError> {
+    ) -> Result<String, RsGuardError> {
         let body = serde_json::json!({
             "model": self.model,
             "messages": chat_messages(system_prompt, user_message),
@@ -474,10 +476,10 @@ After implementing a new provider:
 
 ## Error Handling
 
-### `DiffguardError` Enum
+### `RsGuardError` Enum
 
 ```rust
-pub enum DiffguardError {
+pub enum RsGuardError {
     /// GitHub REST API error
     GitHubApi { status: u16, message: String },
     /// LLM provider error
@@ -502,7 +504,7 @@ pub enum DiffguardError {
 ### Helper Methods
 
 ```rust
-impl DiffguardError {
+impl RsGuardError {
     /// Returns true for transient errors (429, 5xx, connection failures)
     pub fn is_retryable(&self) -> bool { ... }
     /// Returns true for 403 permission errors
@@ -513,7 +515,7 @@ impl DiffguardError {
 ### Best Practices
 
 - Use `anyhow::Context` for contextual error messages in `main.rs` and `pipeline.rs`.
-- Use `thiserror` derive macros for display/error conversion (already in `DiffguardError`).
+- Use `thiserror` derive macros for display/error conversion (already in `RsGuardError`).
 - Check `is_retryable()` before deciding whether retry.
 - Check `is_permission_denied()` for automatic fallback to `COMMENT` status.
 

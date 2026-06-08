@@ -3,7 +3,7 @@
 //! Communicates with the DashScope-compatible chat completions API.
 //! Sends `result_format: "message"` as required by the DashScope API.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatMessage, LlmProvider};
 use async_trait::async_trait;
 use serde::Serialize;
@@ -36,7 +36,12 @@ pub struct QwenClient {
 
 impl QwenClient {
     /// Creates a new Qwen client with the given API key.
-    pub fn new(api_key: impl Into<String>) -> Result<Self, DiffguardError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RsGuardError::Config`] if the API key contains invalid characters
+    /// or if the HTTP client cannot be built.
+    pub fn new(api_key: impl Into<String>) -> Result<Self, RsGuardError> {
         let client = build_llm_client("qwen", &api_key.into(), &[])?;
         Ok(Self {
             base_url: DEFAULT_BASE_URL.to_string(),
@@ -76,7 +81,7 @@ impl LlmProvider for QwenClient {
         system_prompt: &str,
         user_message: &str,
         temperature: f32,
-    ) -> Result<String, DiffguardError> {
+    ) -> Result<String, RsGuardError> {
         let request = QwenChatRequest {
             model: self.model.clone(),
             messages: chat_messages(system_prompt, user_message),
@@ -105,7 +110,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
                     "message": {
-                        "content": "Looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
+                        "content": "Looks good.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
                     }
                 }]
             })))

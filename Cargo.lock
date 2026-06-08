@@ -355,32 +355,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
-name = "diffguard"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "clap",
- "colored",
- "criterion",
- "env_logger",
- "hex",
- "log",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "serial_test",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "toml",
- "url",
- "wiremock",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1356,6 +1330,32 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rs-guard"
+version = "0.6.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "colored",
+ "criterion",
+ "env_logger",
+ "hex",
+ "log",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "url",
+ "wiremock",
 ]
 
 [[package]]

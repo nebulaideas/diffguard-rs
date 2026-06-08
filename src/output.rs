@@ -12,7 +12,7 @@ use std::io::Write;
 pub const ARTIFACT_FILENAME: &str = "review-result.txt";
 
 /// Default filename for the metrics JSON artifact.
-pub const METRICS_FILENAME: &str = "diffguard-metrics.json";
+pub const METRICS_FILENAME: &str = "rs-guard-metrics.json";
 
 /// Per-run metrics for observability and cost tracking.
 #[derive(Debug, Clone, Serialize)]
@@ -21,10 +21,10 @@ pub struct ReviewMetrics {
     pub provider: String,
     /// Model identifier.
     pub model: String,
-    /// Estimated input tokens sent to the LLM.
-    pub tokens_in: usize,
-    /// Estimated output tokens received from the LLM.
-    pub tokens_out: usize,
+    /// Estimated input tokens sent to the LLM (character count / 4 heuristic).
+    pub estimated_tokens_in: usize,
+    /// Estimated output tokens received from the LLM (character count / 4 heuristic).
+    pub estimated_tokens_out: usize,
     /// API latency in seconds.
     pub latency_secs: f64,
     /// Estimated cost in cents (USD).
@@ -70,7 +70,7 @@ pub fn write_artifact(
     path: &str,
 ) -> std::io::Result<()> {
     let content = format!(
-        "diffguard-rs Review Result
+        "rs-guard Review Result
 ==========================
 Provider: {}
 Model: {}
@@ -98,6 +98,13 @@ SecurityIssues: {}
         verdict.security_issues,
     );
 
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
     let mut file = std::fs::File::create(path)?;
     file.write_all(content.as_bytes())?;
     Ok(())
@@ -124,7 +131,7 @@ pub fn print_colored_report(
     state: &ReviewState,
     writer: &mut impl Write,
 ) -> std::io::Result<()> {
-    writeln!(writer, "{}", "diffguard-rs Review".bold().underline())?;
+    writeln!(writer, "{}", "rs-guard Review".bold().underline())?;
     writeln!(writer)?;
 
     match state {
@@ -154,6 +161,12 @@ pub fn print_colored_report(
 ///
 /// Returns [`std::io::Error`] if the file cannot be created or written.
 pub fn write_metrics(metrics: &ReviewMetrics, path: &str) -> std::io::Result<()> {
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
     let json = serde_json::to_string_pretty(metrics).map_err(std::io::Error::other)?;
     std::fs::write(path, json)
 }
@@ -205,8 +218,8 @@ mod tests {
         let metrics = ReviewMetrics {
             provider: "deepseek".to_string(),
             model: "deepseek-v4-flash".to_string(),
-            tokens_in: 4230,
-            tokens_out: 892,
+            estimated_tokens_in: 4230,
+            estimated_tokens_out: 892,
             latency_secs: 8.4,
             estimated_cost_cents: 3,
             diff_lines: 150,

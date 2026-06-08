@@ -3,7 +3,7 @@
 //! Provides [`with_retry`], a generic async retry wrapper with exponential
 //! backoff, jitter, and an optional circuit breaker.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -56,6 +56,15 @@ struct CircuitBreakerState {
 /// using `Arc<CircuitBreaker>`.
 ///
 /// Opt-in: disabled by default.
+///
+/// # Current Status
+///
+/// This circuit breaker is well-tested (17 tests) but not currently wired
+/// into the pipeline. All callers use [`with_retry_simple`] which passes
+/// `None` for the circuit breaker parameter. This is an intentional decision
+/// recorded in the [Decision Log](https://github.com/nebulaideas/rs-guard/blob/main/docs/MVP_IMPLEMENTATION_PLAN.md#appendix-f-decision-log)
+/// — it keeps the default experience simple and the feature is available
+/// via `.reviewer.toml` configuration when needed.
 #[derive(Debug, Clone)]
 pub struct CircuitBreaker {
     /// Whether the circuit breaker is active.
@@ -218,25 +227,25 @@ fn backoff_delay(attempt: u32) -> Duration {
 /// Executes an async operation with automatic retry on transient failures.
 ///
 /// Uses exponential backoff (1s, 2s, 4s) with ±25% jitter.
-/// Retries up to [`MAX_RETRIES`] times for retryable errors.
+/// Retries up to `MAX_RETRIES` times for retryable errors.
 /// Non-retryable errors are returned immediately.
 ///
 /// # Arguments
 ///
-/// * `operation` — A closure returning a `Future` that produces `Result<T, DiffguardError>`.
+/// * `operation` — A closure returning a `Future` that produces `Result<T, RsGuardError>`.
 /// * `circuit` — Optional circuit breaker to prevent calls when the provider is failing.
 pub async fn with_retry<T, F, Fut>(
     operation: F,
     circuit: Option<&CircuitBreaker>,
-) -> Result<T, DiffguardError>
+) -> Result<T, RsGuardError>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, DiffguardError>>,
+    Fut: Future<Output = Result<T, RsGuardError>>,
 {
     // Check circuit breaker before attempting
     if let Some(cb) = circuit {
         if !cb.allow_request() {
-            return Err(DiffguardError::Config(
+            return Err(RsGuardError::Config(
                 "Circuit breaker open — skipping request".to_string(),
             ));
         }
@@ -273,16 +282,16 @@ where
         }
     }
 
-    Err(last_error.unwrap_or_else(|| DiffguardError::Config("Max retries exceeded".to_string())))
+    Err(last_error.unwrap_or_else(|| RsGuardError::Config("Max retries exceeded".to_string())))
 }
 
 /// Executes an async operation with automatic retry (no circuit breaker).
 ///
 /// Convenience wrapper for [`with_retry`] when circuit breaking is not needed.
-pub async fn with_retry_simple<T, F, Fut>(operation: F) -> Result<T, DiffguardError>
+pub async fn with_retry_simple<T, F, Fut>(operation: F) -> Result<T, RsGuardError>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, DiffguardError>>,
+    Fut: Future<Output = Result<T, RsGuardError>>,
 {
     with_retry(operation, None).await
 }
@@ -297,7 +306,7 @@ mod tests {
         let counter = AtomicUsize::new(0);
         let result = with_retry_simple(|| async {
             counter.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, DiffguardError>("success")
+            Ok::<_, RsGuardError>("success")
         })
         .await;
         assert!(result.is_ok());
@@ -310,7 +319,7 @@ mod tests {
         let result = with_retry_simple(|| async {
             let count = counter.fetch_add(1, Ordering::SeqCst);
             if count < 2 {
-                Err(DiffguardError::GitHubApi {
+                Err(RsGuardError::GitHubApi {
                     status: 503,
                     message: "temporarily unavailable".to_string(),
                 })
@@ -328,7 +337,7 @@ mod tests {
         let counter = AtomicUsize::new(0);
         let result = with_retry_simple(|| async {
             counter.fetch_add(1, Ordering::SeqCst);
-            Err::<(), _>(DiffguardError::GitHubApi {
+            Err::<(), _>(RsGuardError::GitHubApi {
                 status: 404,
                 message: "not found".to_string(),
             })
@@ -344,7 +353,7 @@ mod tests {
         let result = with_retry_simple(|| async {
             let count = counter.fetch_add(1, Ordering::SeqCst);
             if count < 1 {
-                Err(DiffguardError::GitHubApi {
+                Err(RsGuardError::GitHubApi {
                     status: 0,
                     message: "connection timed out".to_string(),
                 })
@@ -362,7 +371,7 @@ mod tests {
         let counter = AtomicUsize::new(0);
         let result = with_retry_simple(|| async {
             counter.fetch_add(1, Ordering::SeqCst);
-            Err::<(), _>(DiffguardError::GitHubApi {
+            Err::<(), _>(RsGuardError::GitHubApi {
                 status: 503,
                 message: "always fails".to_string(),
             })
@@ -453,7 +462,7 @@ mod tests {
         let result = with_retry(
             || async {
                 counter.fetch_add(1, Ordering::SeqCst);
-                Ok::<_, DiffguardError>("should not be called")
+                Ok::<_, RsGuardError>("should not be called")
             },
             Some(&cb),
         )
@@ -469,7 +478,7 @@ mod tests {
     async fn test_retry_with_circuit_breaker_records_success() {
         let cb = CircuitBreaker::new(3, 60);
 
-        let result = with_retry(|| async { Ok::<_, DiffguardError>("ok") }, Some(&cb)).await;
+        let result = with_retry(|| async { Ok::<_, RsGuardError>("ok") }, Some(&cb)).await;
 
         assert!(result.is_ok());
         assert_eq!(cb.failure_count(), 0);
@@ -482,7 +491,7 @@ mod tests {
 
         let result = with_retry(
             || async {
-                Err::<(), _>(DiffguardError::GitHubApi {
+                Err::<(), _>(RsGuardError::GitHubApi {
                     status: 500,
                     message: "server error".to_string(),
                 })

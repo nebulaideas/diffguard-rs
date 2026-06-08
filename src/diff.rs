@@ -3,7 +3,7 @@
 //! Provides [`fetch_pr_diff`] for retrieving PR diffs via the GitHub REST API
 //! and [`fetch_local_diff`] for reading `git diff --cached` output.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::http::{build_github_http_client, github_diff_headers, validate_github_base_url};
 use crate::retry::with_retry_simple;
 use std::borrow::Cow;
@@ -45,13 +45,13 @@ pub struct DiffResult {
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::InvalidDiffContent`] if the content does not
+/// Returns [`RsGuardError::InvalidDiffContent`] if the content does not
 /// appear to be a valid diff.
-fn validate_diff_content(content: &str) -> Result<(), DiffguardError> {
+fn validate_diff_content(content: &str) -> Result<(), RsGuardError> {
     let trimmed = content.trim_start();
 
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        return Err(DiffguardError::InvalidDiffContent);
+        return Err(RsGuardError::InvalidDiffContent);
     }
 
     let has_diff_markers = content.contains("diff --git")
@@ -62,7 +62,7 @@ fn validate_diff_content(content: &str) -> Result<(), DiffguardError> {
         || content.starts_with("index ");
 
     if !has_diff_markers {
-        return Err(DiffguardError::InvalidDiffContent);
+        return Err(RsGuardError::InvalidDiffContent);
     }
 
     Ok(())
@@ -70,7 +70,7 @@ fn validate_diff_content(content: &str) -> Result<(), DiffguardError> {
 
 /// Chunks a large diff by preserving the first N and last N lines.
 ///
-/// When a diff exceeds [`CHUNK_HEAD_LINES`] + [`CHUNK_TAIL_LINES`], the middle
+/// When a diff exceeds `CHUNK_HEAD_LINES` + `CHUNK_TAIL_LINES`, the middle
 /// section is replaced with a placeholder indicating how many lines were removed.
 /// This keeps review context windows manageable for very large diffs.
 ///
@@ -144,23 +144,29 @@ pub fn chunk_diff(content: &str) -> (Cow<'_, str>, bool, usize) {
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if `base_url` is not allowlisted,
-/// [`DiffguardError::GitHubApi`] on HTTP errors,
-/// [`DiffguardError::EmptyDiff`] if the diff is empty,
-/// [`DiffguardError::InvalidDiffContent`] if the response is not a valid diff,
-/// or [`DiffguardError::DiffTooLarge`] if the diff exceeds size limits.
+/// Returns [`RsGuardError::Config`] if `base_url` is not allowlisted,
+/// [`RsGuardError::GitHubApi`] on HTTP errors,
+/// [`RsGuardError::EmptyDiff`] if the diff is empty,
+/// [`RsGuardError::InvalidDiffContent`] if the response is not a valid diff,
+/// or [`RsGuardError::DiffTooLarge`] if the diff exceeds size limits.
 pub async fn fetch_pr_diff(
     base_url: &str,
     owner: &str,
     repo: &str,
     pr_number: u64,
     token: &str,
-) -> Result<DiffResult, DiffguardError> {
+) -> Result<DiffResult, RsGuardError> {
     validate_github_base_url(base_url)?;
 
     let client = build_github_http_client(REQUEST_TIMEOUT)?;
 
-    let url = format!("{}/repos/{}/{}/pulls/{}", base_url, owner, repo, pr_number);
+    let url = format!(
+        "{}/repos/{}/{}/pulls/{}",
+        base_url.trim_end_matches('/'),
+        owner,
+        repo,
+        pr_number
+    );
     let headers = github_diff_headers(token)?;
 
     let response = with_retry_simple(|| async {
@@ -171,7 +177,7 @@ pub async fn fetch_pr_diff(
             .await
             .map_err(|e| {
                 let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
-                DiffguardError::GitHubApi {
+                RsGuardError::GitHubApi {
                     status,
                     message: e.to_string(),
                 }
@@ -179,14 +185,17 @@ pub async fn fetch_pr_diff(
 
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(DiffguardError::GitHubApi {
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("[failed to read response body: {}]", e));
+            return Err(RsGuardError::GitHubApi {
                 status: status.as_u16(),
                 message: body,
             });
         }
 
-        let body = resp.text().await.map_err(|e| DiffguardError::GitHubApi {
+        let body = resp.text().await.map_err(|e| RsGuardError::GitHubApi {
             status: 0,
             message: e.to_string(),
         })?;
@@ -196,7 +205,7 @@ pub async fn fetch_pr_diff(
     .await?;
 
     if response.is_empty() {
-        return Err(DiffguardError::EmptyDiff);
+        return Err(RsGuardError::EmptyDiff);
     }
 
     validate_diff_content(&response)?;
@@ -205,7 +214,7 @@ pub async fn fetch_pr_diff(
     let line_count = response.lines().count();
 
     if size_bytes > MAX_DIFF_BYTES || line_count > MAX_DIFF_LINES {
-        return Err(DiffguardError::DiffTooLarge {
+        return Err(RsGuardError::DiffTooLarge {
             size_bytes,
             line_count,
         });
@@ -225,17 +234,16 @@ pub async fn fetch_pr_diff(
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the file does not exist or cannot
-/// be read, [`DiffguardError::EmptyDiff`] if the file is empty,
-/// [`DiffguardError::InvalidDiffContent`] if the content does not look
-/// like a diff, or [`DiffguardError::DiffTooLarge`] if it exceeds size limits.
-pub fn fetch_file_diff(path: &str) -> Result<DiffResult, DiffguardError> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        DiffguardError::Config(format!("Failed to read diff file '{}': {}", path, e))
-    })?;
+/// Returns [`RsGuardError::Config`] if the file does not exist or cannot
+/// be read, [`RsGuardError::EmptyDiff`] if the file is empty,
+/// [`RsGuardError::InvalidDiffContent`] if the content does not look
+/// like a diff, or [`RsGuardError::DiffTooLarge`] if it exceeds size limits.
+pub fn fetch_file_diff(path: &str) -> Result<DiffResult, RsGuardError> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| RsGuardError::Config(format!("Failed to read diff file '{}': {}", path, e)))?;
 
     if content.is_empty() {
-        return Err(DiffguardError::EmptyDiff);
+        return Err(RsGuardError::EmptyDiff);
     }
 
     validate_diff_content(&content)?;
@@ -244,7 +252,7 @@ pub fn fetch_file_diff(path: &str) -> Result<DiffResult, DiffguardError> {
     let line_count = content.lines().count();
 
     if size_bytes > MAX_DIFF_BYTES || line_count > MAX_DIFF_LINES {
-        return Err(DiffguardError::DiffTooLarge {
+        return Err(RsGuardError::DiffTooLarge {
             size_bytes,
             line_count,
         });
@@ -261,18 +269,18 @@ pub fn fetch_file_diff(path: &str) -> Result<DiffResult, DiffguardError> {
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Io`] if the git command fails,
-/// [`DiffguardError::EmptyDiff`] if there are no staged changes,
-/// or [`DiffguardError::DiffTooLarge`] if the diff exceeds size limits.
-pub fn fetch_local_diff() -> Result<DiffResult, DiffguardError> {
+/// Returns [`RsGuardError::Io`] if the git command fails,
+/// [`RsGuardError::EmptyDiff`] if there are no staged changes,
+/// or [`RsGuardError::DiffTooLarge`] if the diff exceeds size limits.
+pub fn fetch_local_diff() -> Result<DiffResult, RsGuardError> {
     let output = std::process::Command::new("git")
         .args(["diff", "--cached"])
         .output()
-        .map_err(DiffguardError::Io)?;
+        .map_err(RsGuardError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DiffguardError::Config(format!(
+        return Err(RsGuardError::Config(format!(
             "git diff --cached failed: {}",
             stderr
         )));
@@ -281,14 +289,14 @@ pub fn fetch_local_diff() -> Result<DiffResult, DiffguardError> {
     let content = String::from_utf8_lossy(&output.stdout).to_string();
 
     if content.is_empty() {
-        return Err(DiffguardError::EmptyDiff);
+        return Err(RsGuardError::EmptyDiff);
     }
 
     let size_bytes = content.len();
     let line_count = content.lines().count();
 
     if size_bytes > MAX_DIFF_BYTES || line_count > MAX_DIFF_LINES {
-        return Err(DiffguardError::DiffTooLarge {
+        return Err(RsGuardError::DiffTooLarge {
             size_bytes,
             line_count,
         });
@@ -474,6 +482,28 @@ mod tests {
     }
 
     #[test]
+    fn test_chunk_diff_preserves_crlf_line_endings() {
+        // Test with CRLF line endings (Windows-style)
+        let lines: Vec<String> = (0..150).map(|i| format!("line {}", i)).collect();
+        let content = lines.join("\r\n") + "\r\n";
+
+        let (result, truncated, removed) = chunk_diff(&content);
+        assert!(truncated);
+        assert_eq!(removed, 50); // 150 - 50 head - 50 tail
+                                 // Result should use CRLF line endings
+        assert!(result.contains("\r\n"));
+        assert!(result.ends_with("\r\n"));
+    }
+
+    #[test]
+    fn test_chunk_diff_small_crlf_unchanged() {
+        let content = "line1\r\nline2\r\nline3\r\n";
+        let (result, truncated, _) = chunk_diff(content);
+        assert!(!truncated);
+        assert_eq!(result.as_ref(), content);
+    }
+
+    #[test]
     fn test_chunk_diff_no_allocation_when_small() {
         // Verify that small diffs don't allocate (Cow::Borrowed)
         let content = "line1\nline2\nline3";
@@ -504,7 +534,7 @@ mod tests {
         std::fs::write(&diff_path, "").unwrap();
 
         let result = fetch_file_diff(diff_path.to_str().unwrap());
-        assert!(matches!(result, Err(DiffguardError::EmptyDiff)));
+        assert!(matches!(result, Err(RsGuardError::EmptyDiff)));
     }
 
     #[test]
@@ -514,7 +544,7 @@ mod tests {
         std::fs::write(&diff_path, "not a diff").unwrap();
 
         let result = fetch_file_diff(diff_path.to_str().unwrap());
-        assert!(matches!(result, Err(DiffguardError::InvalidDiffContent)));
+        assert!(matches!(result, Err(RsGuardError::InvalidDiffContent)));
     }
 
     #[test]
@@ -527,12 +557,28 @@ mod tests {
         std::fs::write(&diff_path, &large_content).unwrap();
 
         let result = fetch_file_diff(diff_path.to_str().unwrap());
-        assert!(matches!(result, Err(DiffguardError::DiffTooLarge { .. })));
+        assert!(matches!(result, Err(RsGuardError::DiffTooLarge { .. })));
     }
 
     #[test]
     fn test_fetch_file_diff_not_found() {
         let result = fetch_file_diff("/nonexistent/path.diff");
-        assert!(matches!(result, Err(DiffguardError::Config(_))));
+        assert!(matches!(result, Err(RsGuardError::Config(_))));
+    }
+
+    #[test]
+    fn test_fetch_local_diff_requires_git_repo() {
+        // Calling fetch_local_diff outside a git repo returns an error
+        let dir = tempfile::tempdir().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let result = fetch_local_diff();
+        // Depending on environment, git may not be installed (Io error),
+        // may return non-zero exit (Config error), or may succeed with
+        // empty output (EmptyDiff). All are valid error states.
+        assert!(result.is_err(), "expected error, got Ok");
+
+        let _ = std::env::set_current_dir(&original_dir);
     }
 }

@@ -1,4 +1,4 @@
-# diffguard Review Prompt
+# rs-guard Review Prompt
 
 You are a senior Rust engineer performing code review on a Pull Request.
 
@@ -17,7 +17,7 @@ Flag any:
 
 At the end of your response, include exactly this metadata block:
 
-[DIFFGUARD_VERDICT_METADATA]
+[RS_GUARD_VERDICT_METADATA]
 Verdict: POSITIVE or NEGATIVE
 CriticalBugs: <count>
 SecurityIssues: <count>

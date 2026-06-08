@@ -3,7 +3,7 @@
 //! Communicates with the DeepSeek chat completions API using an
 //! OpenAI-compatible request format.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatRequest, LlmProvider};
 use async_trait::async_trait;
 
@@ -29,7 +29,7 @@ impl DeepSeekClient {
     ///
     /// Returns an error if the API key contains invalid header characters
     /// or if the HTTP client cannot be built.
-    pub fn new(api_key: impl Into<String>) -> Result<Self, DiffguardError> {
+    pub fn new(api_key: impl Into<String>) -> Result<Self, RsGuardError> {
         let client = build_llm_client("deepseek", &api_key.into(), &[])?;
         Ok(Self {
             base_url: DEFAULT_BASE_URL.to_string(),
@@ -69,7 +69,7 @@ impl LlmProvider for DeepSeekClient {
         system_prompt: &str,
         user_message: &str,
         temperature: f32,
-    ) -> Result<String, DiffguardError> {
+    ) -> Result<String, RsGuardError> {
         let request = ChatRequest {
             model: self.model.clone(),
             messages: chat_messages(system_prompt, user_message),
@@ -97,7 +97,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
                     "message": {
-                        "content": "This looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
+                        "content": "This looks good.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
                     }
                 }]
             })))

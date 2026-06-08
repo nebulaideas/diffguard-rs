@@ -1,5 +1,5 @@
 #![deny(missing_docs)]
-//! diffguard — AI-powered code review CLI for GitHub Pull Requests.
+//! rs-guard — AI-powered code review CLI for GitHub Pull Requests.
 //!
 //! This crate provides the core functionality for fetching PR diffs,
 //! sending them to an LLM for review, parsing structured verdicts,
@@ -7,6 +7,7 @@
 //!
 //! # Modules
 //!
+//! - [`cache`] — LLM response caching with SHA-256 keyed entries
 //! - [`cli`] — Command-line argument parsing
 //! - [`config`] — Environment and configuration resolution
 //! - [`diff`] — PR diff fetching (GitHub API and local git)
@@ -15,8 +16,9 @@
 //! - [`http`] — Shared HTTP utilities and URL validation
 //! - [`llm`] — LLM provider abstraction and implementations
 //! - [`output`] — Terminal output and artifact writing
+//! - [`pipeline`] — Orchestration of the full review workflow
 //! - [`redact`] — Secret redaction and content filtering
-//! - [`retry`] — Transient failure retry logic
+//! - [`retry`] — Transient failure retry logic and circuit breaker
 //! - [`verdict`] — Verdict parsing and review state determination
 
 pub mod cache;

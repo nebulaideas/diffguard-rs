@@ -3,7 +3,7 @@
 //! Provides [`submit_review`] with automatic permission-fallback to `COMMENT`,
 //! and [`dismiss_previous_reviews`] for cleaning up outdated bot reviews.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::http::{build_github_http_client, github_headers, validate_github_base_url};
 use crate::retry::with_retry_simple;
 use crate::verdict::ReviewState;
@@ -12,8 +12,8 @@ use serde_json::json;
 /// HTTP request timeout for GitHub API calls.
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// HTML comment signature used to identify diffguard bot reviews.
-const BOT_SIGNATURE: &str = "<!-- diffguard-bot -->";
+/// HTML comment signature used to identify rs-guard bot reviews.
+const BOT_SIGNATURE: &str = "<!-- rs-guard-bot -->";
 
 /// Submits a review to a GitHub Pull Request without permission fallback.
 async fn submit_review_inner(
@@ -24,12 +24,15 @@ async fn submit_review_inner(
     state: &ReviewState,
     message: &str,
     token: &str,
-) -> Result<(), DiffguardError> {
+) -> Result<(), RsGuardError> {
     let client = build_github_http_client(REQUEST_TIMEOUT)?;
 
     let url = format!(
         "{}/repos/{}/{}/pulls/{}/reviews",
-        base_url, owner, repo, pr_number
+        base_url.trim_end_matches('/'),
+        owner,
+        repo,
+        pr_number
     );
 
     let headers = github_headers(token)?;
@@ -48,7 +51,7 @@ async fn submit_review_inner(
             .await
             .map_err(|e| {
                 let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
-                DiffguardError::GitHubApi {
+                RsGuardError::GitHubApi {
                     status,
                     message: e.to_string(),
                 }
@@ -56,8 +59,11 @@ async fn submit_review_inner(
 
         let status = resp.status();
         if !status.is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
-            return Err(DiffguardError::GitHubApi {
+            let body_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("[failed to read response body: {}]", e));
+            return Err(RsGuardError::GitHubApi {
                 status: status.as_u16(),
                 message: body_text,
             });
@@ -93,7 +99,7 @@ pub async fn submit_review(
     state: ReviewState,
     message: &str,
     token: &str,
-) -> Result<(), DiffguardError> {
+) -> Result<(), RsGuardError> {
     validate_github_base_url(base_url)?;
 
     let result =
@@ -122,10 +128,10 @@ pub async fn submit_review(
     }
 }
 
-/// Dismisses previous diffguard `CHANGES_REQUESTED` reviews on a Pull Request.
+/// Dismisses previous rs-guard `CHANGES_REQUESTED` reviews on a Pull Request.
 ///
 /// Queries all reviews on the PR, identifies those with state `CHANGES_REQUESTED`
-/// that contain the [`BOT_SIGNATURE`] marker, and dismisses each one with the
+/// that contain the `BOT_SIGNATURE` marker, and dismisses each one with the
 /// message "Outdated — new review submitted".
 ///
 /// Individual dismissal failures are logged as warnings but do not cause this
@@ -146,14 +152,17 @@ pub async fn dismiss_previous_reviews(
     repo: &str,
     pr_number: u64,
     token: &str,
-) -> Result<(), DiffguardError> {
+) -> Result<(), RsGuardError> {
     validate_github_base_url(base_url)?;
 
     let client = build_github_http_client(REQUEST_TIMEOUT)?;
 
     let url = format!(
         "{}/repos/{}/{}/pulls/{}/reviews",
-        base_url, owner, repo, pr_number
+        base_url.trim_end_matches('/'),
+        owner,
+        repo,
+        pr_number
     );
 
     let headers = github_headers(token)?;
@@ -166,7 +175,7 @@ pub async fn dismiss_previous_reviews(
             .await
             .map_err(|e| {
                 let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
-                DiffguardError::GitHubApi {
+                RsGuardError::GitHubApi {
                     status,
                     message: e.to_string(),
                 }
@@ -174,14 +183,17 @@ pub async fn dismiss_previous_reviews(
 
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(DiffguardError::GitHubApi {
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("[failed to read response body: {}]", e));
+            return Err(RsGuardError::GitHubApi {
                 status: status.as_u16(),
                 message: body,
             });
         }
 
-        resp.json().await.map_err(|e| DiffguardError::GitHubApi {
+        resp.json().await.map_err(|e| RsGuardError::GitHubApi {
             status: 0,
             message: e.to_string(),
         })
@@ -197,7 +209,11 @@ pub async fn dismiss_previous_reviews(
             if let Some(id) = review_id {
                 let dismiss_url = format!(
                     "{}/repos/{}/{}/pulls/{}/reviews/{}/dismissals",
-                    base_url, owner, repo, pr_number, id
+                    base_url.trim_end_matches('/'),
+                    owner,
+                    repo,
+                    pr_number,
+                    id
                 );
 
                 let dismiss_body = json!({
@@ -213,7 +229,7 @@ pub async fn dismiss_previous_reviews(
                         .await
                         .map_err(|e| {
                             let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
-                            DiffguardError::GitHubApi {
+                            RsGuardError::GitHubApi {
                                 status,
                                 message: e.to_string(),
                             }
@@ -221,8 +237,11 @@ pub async fn dismiss_previous_reviews(
 
                     let status = resp.status();
                     if !status.is_success() {
-                        let body = resp.text().await.unwrap_or_default();
-                        return Err(DiffguardError::GitHubApi {
+                        let body = resp
+                            .text()
+                            .await
+                            .unwrap_or_else(|e| format!("[failed to read response body: {}]", e));
+                        return Err(RsGuardError::GitHubApi {
                             status: status.as_u16(),
                             message: body,
                         });
@@ -457,7 +476,7 @@ mod tests {
         let bot_review = json!({
             "id": 42,
             "state": "CHANGES_REQUESTED",
-            "body": "Some review\n\n<!-- diffguard-bot -->"
+            "body": "Some review\n\n<!-- rs-guard-bot -->"
         });
 
         Mock::given(method("GET"))
@@ -509,7 +528,7 @@ mod tests {
         let approved_review = json!({
             "id": 55,
             "state": "APPROVED",
-            "body": "<!-- diffguard-bot -->\nLGTM"
+            "body": "<!-- rs-guard-bot -->\nLGTM"
         });
 
         Mock::given(method("GET"))
@@ -531,7 +550,7 @@ mod tests {
         let bot_review = json!({
             "id": 42,
             "state": "CHANGES_REQUESTED",
-            "body": "<!-- diffguard-bot -->\nReview"
+            "body": "<!-- rs-guard-bot -->\nReview"
         });
 
         Mock::given(method("GET"))
