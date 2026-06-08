@@ -138,7 +138,7 @@ diffguard-rs/
 # Build
 cargo build
 
-# Full test suite (~170 tests)
+# Full test suite (~220 tests)
 cargo test
 
 # Lint (zero warnings required)
@@ -176,7 +176,7 @@ cargo audit
 | `pipeline.rs` | 5 | Integration |
 | `http.rs` | 16 | Inline |
 | `cli.rs` | 3 | Inline |
-| **Total** | **~170** | |
+| **Total** | **~220** | |
 
 ---
 
@@ -256,7 +256,7 @@ cargo audit
 ## Notes for Agents
 
 - **Source code exists** — all ~4,200 lines across 16 modules.
-- **~170 tests** pass with `wiremock`, `serial_test`, and `tempfile` infrastructure.
+- **~220 tests** pass with `wiremock`, `serial_test`, and `tempfile` infrastructure.
 - **The implementation plan** (`docs/MVP_IMPLEMENTATION_PLAN.md`) is authoritative but section "Phase 0: Pre-requisite Cleanup" was added during Phase 3 implementation.
 - **`Config::empty()`** is a `#[doc(hidden)]` constructor for tests — not for production use.
 - **New modules** added since the original plan: `pipeline.rs`, `http.rs`, `redact.rs`, `cache.rs`, `llm/providers.rs`.
