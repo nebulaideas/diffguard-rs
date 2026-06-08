@@ -1,6 +1,6 @@
 //! Error types for the rs-guard application.
 //!
-//! Provides a unified [`DiffguardError`] enum covering all failure modes
+//! Provides a unified [`RsGuardError`] enum covering all failure modes
 //! encountered during diff fetching, LLM interaction, verdict parsing,
 //! GitHub API communication, and general I/O.
 
@@ -8,7 +8,7 @@ use thiserror::Error;
 
 /// Unified error type for all rs-guard operations.
 #[derive(Error, Debug)]
-pub enum DiffguardError {
+pub enum RsGuardError {
     /// GitHub REST API returned an error response.
     #[error("GitHub API error: {status} - {message}")]
     GitHubApi {
@@ -76,7 +76,7 @@ pub enum DiffguardError {
     },
 }
 
-impl DiffguardError {
+impl RsGuardError {
     /// Returns `true` if this error is transient and the operation should be retried.
     ///
     /// Retryable conditions:
@@ -85,10 +85,10 @@ impl DiffguardError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            DiffguardError::GitHubApi {
+            RsGuardError::GitHubApi {
                 status: 0 | 429 | 502 | 503 | 504,
                 ..
-            } | DiffguardError::LlmApi {
+            } | RsGuardError::LlmApi {
                 status: 0 | 429 | 502 | 503 | 504,
                 ..
             }
@@ -98,13 +98,161 @@ impl DiffguardError {
     /// Returns `true` if this error indicates insufficient GitHub permissions.
     pub fn is_permission_denied(&self) -> bool {
         match self {
-            DiffguardError::GitHubApi { status: 403, .. } => true,
-            DiffguardError::GitHubApi {
+            RsGuardError::GitHubApi { status: 403, .. } => true,
+            RsGuardError::GitHubApi {
                 status: 422,
                 message,
             } => message.to_lowercase().contains("not permitted"),
-            DiffguardError::PermissionDenied { .. } => true,
+            RsGuardError::PermissionDenied { .. } => true,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_retryable_github_429() {
+        let err = RsGuardError::GitHubApi {
+            status: 429,
+            message: "rate limited".to_string(),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_github_502() {
+        let err = RsGuardError::GitHubApi {
+            status: 502,
+            message: "bad gateway".to_string(),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_github_503() {
+        let err = RsGuardError::GitHubApi {
+            status: 503,
+            message: "service unavailable".to_string(),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_github_504() {
+        let err = RsGuardError::GitHubApi {
+            status: 504,
+            message: "gateway timeout".to_string(),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_github_0() {
+        let err = RsGuardError::GitHubApi {
+            status: 0,
+            message: "connection error".to_string(),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_github_404_not_retryable() {
+        let err = RsGuardError::GitHubApi {
+            status: 404,
+            message: "not found".to_string(),
+        };
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_github_403_not_retryable() {
+        let err = RsGuardError::GitHubApi {
+            status: 403,
+            message: "forbidden".to_string(),
+        };
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_llm_429() {
+        let err = RsGuardError::LlmApi {
+            provider: "deepseek".to_string(),
+            status: 429,
+            message: "rate limited".to_string(),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_llm_0() {
+        let err = RsGuardError::LlmApi {
+            provider: "deepseek".to_string(),
+            status: 0,
+            message: "connection error".to_string(),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_config_not_retryable() {
+        let err = RsGuardError::Config("bad config".to_string());
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_permission_denied_403() {
+        let err = RsGuardError::GitHubApi {
+            status: 403,
+            message: "forbidden".to_string(),
+        };
+        assert!(err.is_permission_denied());
+    }
+
+    #[test]
+    fn test_is_permission_denied_422_not_permitted() {
+        let err = RsGuardError::GitHubApi {
+            status: 422,
+            message: "Review not permitted for this user".to_string(),
+        };
+        assert!(err.is_permission_denied());
+    }
+
+    #[test]
+    fn test_is_permission_denied_422_case_insensitive() {
+        let err = RsGuardError::GitHubApi {
+            status: 422,
+            message: "NOT PERMITTED".to_string(),
+        };
+        assert!(err.is_permission_denied());
+    }
+
+    #[test]
+    fn test_is_permission_denied_422_other_message() {
+        let err = RsGuardError::GitHubApi {
+            status: 422,
+            message: "Validation failed".to_string(),
+        };
+        assert!(!err.is_permission_denied());
+    }
+
+    #[test]
+    fn test_is_permission_denied_explicit_variant() {
+        let err = RsGuardError::PermissionDenied {
+            state: "APPROVE".to_string(),
+            message: "not allowed".to_string(),
+        };
+        assert!(err.is_permission_denied());
+    }
+
+    #[test]
+    fn test_is_permission_denied_404_not_denied() {
+        let err = RsGuardError::GitHubApi {
+            status: 404,
+            message: "not found".to_string(),
+        };
+        assert!(!err.is_permission_denied());
     }
 }

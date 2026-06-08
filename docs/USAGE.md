@@ -44,7 +44,7 @@ rs-guard detects the execution mode:
 
 - **CI mode:** `GITHUB_ACTIONS` env var is set. Fetches PR diff and submits GitHub review.
 - **Local mode:** `GITHUB_ACTIONS` absent. Runs `git diff --cached`, prints colored summary, exits code `2` if `REQUEST_CHANGES`.
-- **File mode:** `--diff-file` or `DIFFGUARD_DIFF_FILE` set. Reads diff from file, prints colored summary.
+- **File mode:** `--diff-file` or `RS_GUARD_DIFF_FILE` set. Reads diff from file, prints colored summary.
 
 ### Examples
 
@@ -77,12 +77,12 @@ rs-guard --no-cache --prompt-file .github/review-prompt.md
 | `PR_NUMBER` | CI mode | Pull request number |
 | `REPO_FULL_NAME` | CI mode | Repository in `owner/repo` format |
 | `GITHUB_ACTIONS` | Auto-detected | Presence indicates CI mode |
-| `DIFFGUARD_PROVIDER` | Optional | Override default provider via environment variable |
-| `DIFFGUARD_MODEL` | Optional | Override default model for the current provider |
-| `DIFFGUARD_TEMPERATURE` | Optional | Override default temperature via environment variable |
-| `DIFFGUARD_MAX_TOKENS` | Optional | Override max tokens via environment variable |
-| `DIFFGUARD_DIFF_FILE` | Optional | Alias for `--diff-file` |
-| `DIFFGUARD_METRICS_PATH` | Optional | Custom path for `rs-guard-metrics.json` artifact |
+| `RS_GUARD_PROVIDER` | Optional | Override default provider via environment variable |
+| `RS_GUARD_MODEL` | Optional | Override default model for the current provider |
+| `RS_GUARD_TEMPERATURE` | Optional | Override default temperature via environment variable |
+| `RS_GUARD_MAX_TOKENS` | Optional | Override max tokens via environment variable |
+| `RS_GUARD_DIFF_FILE` | Optional | Alias for `--diff-file` |
+| `RS_GUARD_METRICS_PATH` | Optional | Custom path for `rs-guard-metrics.json` artifact |
 | `GITHUB_API_URL` | Optional | Custom GitHub API base URL (e.g. GitHub Enterprise); default: `https://api.github.com` |
 
 ---
@@ -270,7 +270,7 @@ http_referer = "https://github.com/your-org/your-repo"
 | Priority | Source | Example |
 |---|---|---|
 | 1 | CLI flags | `--provider kimi` |
-| 2 | Environment variables | `DIFFGUARD_PROVIDER=kimi` |
+| 2 | Environment variables | `RS_GUARD_PROVIDER=kimi` |
 | 3 | TOML file | `provider = "kimi"` in `.reviewer.toml` |
 | 4 | Hardcoded defaults | `provider = "deepseek"` |
 

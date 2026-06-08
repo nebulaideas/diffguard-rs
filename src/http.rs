@@ -4,7 +4,7 @@
 //! and review submission, along with [`validate_github_base_url`] for
 //! strict allowlisting of GitHub API endpoints.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::llm::providers;
 use reqwest::header::{self, HeaderMap, HeaderValue};
 use url::Url;
@@ -21,14 +21,14 @@ const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VE
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the TLS backend fails to initialise.
+/// Returns [`RsGuardError::Config`] if the TLS backend fails to initialise.
 pub fn build_github_http_client(
     timeout: std::time::Duration,
-) -> Result<reqwest::Client, DiffguardError> {
+) -> Result<reqwest::Client, RsGuardError> {
     reqwest::Client::builder()
         .timeout(timeout)
         .build()
-        .map_err(|e| DiffguardError::Config(format!("Failed to build HTTP client: {}", e)))
+        .map_err(|e| RsGuardError::Config(format!("Failed to build HTTP client: {}", e)))
 }
 
 /// Allowed GitHub API base URLs.
@@ -49,8 +49,8 @@ const ALLOWED_BASE_URLS: &[&str] = &["https://api.github.com"];
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the URL is not allowed.
-pub fn validate_github_base_url(base_url: &str) -> Result<(), DiffguardError> {
+/// Returns [`RsGuardError::Config`] if the URL is not allowed.
+pub fn validate_github_base_url(base_url: &str) -> Result<(), RsGuardError> {
     let trimmed = base_url.trim_end_matches('/');
 
     if trimmed.starts_with("http://127.0.0.1") || trimmed.starts_with("http://localhost") {
@@ -58,7 +58,7 @@ pub fn validate_github_base_url(base_url: &str) -> Result<(), DiffguardError> {
     }
 
     if !trimmed.starts_with("https://") {
-        return Err(DiffguardError::Config(format!(
+        return Err(RsGuardError::Config(format!(
             "GitHub base URL must use HTTPS: '{}'. HTTP is not allowed.",
             base_url
         )));
@@ -72,7 +72,7 @@ pub fn validate_github_base_url(base_url: &str) -> Result<(), DiffguardError> {
         return Ok(());
     }
 
-    Err(DiffguardError::Config(format!(
+    Err(RsGuardError::Config(format!(
         "GitHub base URL '{}' is not in the allowlist. \
          Allowed: {} or https://<enterprise-host>/api/v3",
         base_url,
@@ -94,24 +94,24 @@ pub fn validate_github_base_url(base_url: &str) -> Result<(), DiffguardError> {
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the URL is not allowed.
-pub fn validate_provider_base_url(base_url: &str) -> Result<(), DiffguardError> {
+/// Returns [`RsGuardError::Config`] if the URL is not allowed.
+pub fn validate_provider_base_url(base_url: &str) -> Result<(), RsGuardError> {
     let parsed = Url::parse(base_url).map_err(|_| {
-        DiffguardError::Config(format!(
+        RsGuardError::Config(format!(
             "Provider base URL is malformed: '{}'. Expected format: https://host/path",
             base_url
         ))
     })?;
 
     if parsed.scheme() != "https" {
-        return Err(DiffguardError::Config(format!(
+        return Err(RsGuardError::Config(format!(
             "Provider base URL must use HTTPS in CI mode: '{}'. HTTP is not allowed.",
             base_url
         )));
     }
 
     let host = parsed.host_str().ok_or_else(|| {
-        DiffguardError::Config(format!(
+        RsGuardError::Config(format!(
             "Provider base URL is malformed: '{}'. No host found.",
             base_url
         ))
@@ -123,7 +123,7 @@ pub fn validate_provider_base_url(base_url: &str) -> Result<(), DiffguardError> 
         || host == "0.0.0.0"
         || host == "[::]"
     {
-        return Err(DiffguardError::Config(format!(
+        return Err(RsGuardError::Config(format!(
             "Provider base URL '{}' uses loopback address, which is not allowed in CI mode \
              to prevent token exfiltration. Use a known provider endpoint or run in local mode.",
             base_url
@@ -142,7 +142,7 @@ pub fn validate_provider_base_url(base_url: &str) -> Result<(), DiffguardError> 
         .map(|(s, h)| format!("{}://{}", s, h))
         .collect();
 
-    Err(DiffguardError::Config(format!(
+    Err(RsGuardError::Config(format!(
         "Provider base URL '{}' (host: {}) is not in the CI allowlist. \
          Allowed hosts: {}. \
          To use a custom endpoint, run in local mode (unset GITHUB_ACTIONS).",
@@ -160,9 +160,9 @@ pub fn validate_provider_base_url(base_url: &str) -> Result<(), DiffguardError> 
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the token contains invalid
+/// Returns [`RsGuardError::Config`] if the token contains invalid
 /// header characters.
-pub fn github_headers(token: &str) -> Result<HeaderMap, DiffguardError> {
+pub fn github_headers(token: &str) -> Result<HeaderMap, RsGuardError> {
     let mut headers = HeaderMap::new();
     headers.insert(
         header::ACCEPT,
@@ -171,7 +171,7 @@ pub fn github_headers(token: &str) -> Result<HeaderMap, DiffguardError> {
     headers.insert(
         header::AUTHORIZATION,
         HeaderValue::from_str(&format!("Bearer {}", token))
-            .map_err(|e| DiffguardError::Config(format!("Invalid GitHub token format: {}", e)))?,
+            .map_err(|e| RsGuardError::Config(format!("Invalid GitHub token format: {}", e)))?,
     );
     headers.insert(
         "X-GitHub-Api-Version",
@@ -188,9 +188,9 @@ pub fn github_headers(token: &str) -> Result<HeaderMap, DiffguardError> {
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the token contains invalid
+/// Returns [`RsGuardError::Config`] if the token contains invalid
 /// header characters.
-pub fn github_diff_headers(token: &str) -> Result<HeaderMap, DiffguardError> {
+pub fn github_diff_headers(token: &str) -> Result<HeaderMap, RsGuardError> {
     let mut headers = github_headers(token)?;
     headers.insert(
         header::ACCEPT,

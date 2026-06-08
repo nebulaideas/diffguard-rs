@@ -17,7 +17,7 @@ CLI flags > Environment variables > TOML file > Hardcoded defaults
 If your `.reviewer.toml` sets `provider = "kimi"`, but you run:
 
 ```bash
-export DIFFGUARD_PROVIDER="openai"
+export RS_GUARD_PROVIDER="openai"
 rs-guard --provider qwen
 ```
 
@@ -108,11 +108,13 @@ base_url = "https://api.openai.com/v1"
 | `PR_NUMBER` | GitHub mode | Pull request number. |
 | `REPO_FULL_NAME` | GitHub mode | Repository in `owner/repo` format. |
 | `GITHUB_ACTIONS` | Auto-detected | Presence indicates CI mode. |
-| `DIFFGUARD_PROVIDER` | Optional | Override TOML/default provider. |
-| `DIFFGUARD_MODEL` | Optional | Override TOML/default model. |
-| `DIFFGUARD_TEMPERATURE` | Optional | Override TOML/default temperature. |
-| `DIFFGUARD_MAX_TOKENS` | Optional | Override TOML/default max tokens. |
+| `RS_GUARD_PROVIDER` | Optional | Override TOML/default provider. |
+| `RS_GUARD_MODEL` | Optional | Override TOML/default model. |
+| `RS_GUARD_TEMPERATURE` | Optional | Override TOML/default temperature. |
+| `RS_GUARD_MAX_TOKENS` | Optional | Override TOML/default max tokens. |
 | `GITHUB_API_URL` | Optional | Custom GitHub API base URL (Enterprise). |
+| `RS_GUARD_DIFF_FILE` | Optional | Path to a pre-existing diff file. |
+| `RS_GUARD_METRICS_PATH` | Optional | Path for the metrics JSON artifact. |
 
 ---
 

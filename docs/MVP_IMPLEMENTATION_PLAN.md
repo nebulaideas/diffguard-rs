@@ -137,13 +137,13 @@ Create a working Rust CLI in a single crate: fetch PR diffs, call DeepSeek, pars
 
 **`src/retry.rs`** — Basic retry logic:
 
-- `with_retry<T, F, Fut>(operation: F) -> Result<T, DiffguardError>`
+- `with_retry<T, F, Fut>(operation: F) -> Result<T, RsGuardError>`
 - Retry on: HTTP 429, 502, 503, 504, timeout errors
 - Strategy: 2 retries with fixed backoff (1s, 2s)
 - Never retry: 401/403, 404, parse errors, config errors
 - All public items have `///` doc comments
 
-**`src/error.rs`** — Define `DiffguardError` enum with variants:
+**`src/error.rs`** — Define `RsGuardError` enum with variants:
 
 - `GitHubApi { status: u16, message: String }`
 - `LlmApi { provider: String, status: u16, message: String }`
@@ -161,9 +161,9 @@ Create a working Rust CLI in a single crate: fetch PR diffs, call DeepSeek, pars
 - `fetch_pr_diff(base_url, owner, repo, pr_number, token)` — configurable `base_url` for GitHub Enterprise support
 - HTTP GET with `Accept: application/vnd.github.v3.diff`
 - `github_headers(token)` helper validates token format via `HeaderValue::from_str` (returns `Config` error instead of panicking)
-- Return `DiffResult { content: String, size_bytes: usize, line_count: usize }` or `DiffguardError::GitHubApi`
-- Handle empty diff gracefully (`DiffguardError::EmptyDiff`)
-- Size guard: if diff exceeds 100KB or 1,500 lines, return `DiffguardError::DiffTooLarge`
+- Return `DiffResult { content: String, size_bytes: usize, line_count: usize }` or `RsGuardError::GitHubApi`
+- Handle empty diff gracefully (`RsGuardError::EmptyDiff`)
+- Size guard: if diff exceeds 100KB or 1,500 lines, return `RsGuardError::DiffTooLarge`
 - `fetch_local_diff()` — executes `git diff --cached` subprocess for local mode
 - All public items have `///` doc comments
 
@@ -208,7 +208,7 @@ Create a working Rust CLI in a single crate: fetch PR diffs, call DeepSeek, pars
 - Endpoint: `POST /chat/completions`
 - Model default: `deepseek-v4-flash`
 - Temperature default: `0.1`
-- `DeepSeekClient::new(api_key)` returns `Result<Self, DiffguardError>` (validates API key format, no panics)
+- `DeepSeekClient::new(api_key)` returns `Result<Self, RsGuardError>` (validates API key format, no panics)
 - Builder methods: `with_base_url()`, `with_model()`
 - Request body: OpenAI-compatible `messages` array with `system` + `user` roles
 - Response parsing: extract `choices[0].message.content`
@@ -216,7 +216,7 @@ Create a working Rust CLI in a single crate: fetch PR diffs, call DeepSeek, pars
 
 **`src/llm/factory.rs`** — Provider factory:
 
-- `create_provider(provider_name, api_key) -> Result<Provider, DiffguardError>`
+- `create_provider(provider_name, api_key) -> Result<Provider, RsGuardError>`
 - Propagates `DeepSeekClient::new()` errors (invalid API key format)
 - All public items have `///` doc comments
 
@@ -234,7 +234,7 @@ pub struct Args {
     #[arg(short, long, default_value_t = 0.1)]
     pub temperature: f32,
 
-    #[arg(long, env = "DIFFGUARD_PROVIDER", default_value = "deepseek")]
+    #[arg(long, env = "RS_GUARD_PROVIDER", default_value = "deepseek")]
     pub provider: String,
 }
 ```
@@ -270,7 +270,7 @@ For each finding, explain the problem and suggest a fix.
 
 At the end of your response, include exactly this metadata block (do not modify the format):
 
-[DIFFGUARD_VERDICT_METADATA]
+[RS_GUARD_VERDICT_METADATA]
 Verdict: POSITIVE or NEGATIVE
 CriticalBugs: <count>
 SecurityIssues: <count>
@@ -348,7 +348,7 @@ Guidelines:
 ### Added
 - Initial release with DeepSeek provider support (`deepseek-v4-flash`)
 - GitHub Actions integration: fetches PR diffs and submits review states
-- In-memory verdict parsing (`[DIFFGUARD_VERDICT_METADATA]` block)
+- In-memory verdict parsing (`[RS_GUARD_VERDICT_METADATA]` block)
 - Three review states: `APPROVE`, `REQUEST_CHANGES`, `COMMENT`
 - Permission fallback: downgrades to `COMMENT` when approval/rejection is not permitted
 - Dismissal of previous rs-guard `CHANGES_REQUESTED` reviews (identified by `<!-- rs-guard-bot -->` HTML comment signature) when new state is non-blocking
@@ -537,7 +537,7 @@ results. These fixes ensure the foundation is solid.
 
 #### P0.5: Update `AGENTS.md`
 
-- [ ] Reflect current state: Phase 1 + 2 complete, Phase 3 in progress
+- [x] Reflect current state: Phase 1 + 2 complete, Phase 3 in progress
 
 #### P0.6: DRY — Extract diff-fetch error handling (deferred)
 
@@ -743,9 +743,9 @@ Create a world-class README and complete all documentation files. This is the pu
 
 #### README.md (Complete Rewrite)
 
-- [ ] **Hero section**: One-sentence description + animated GIF or screenshot of terminal output
-- [ ] **Badges**: CI status, test coverage, docs.rs, crates.io version, license
-- [ ] **Quick Start** (3-step copy-paste):
+- [x] **Hero section**: One-sentence description + animated GIF or screenshot of terminal output
+- [x] **Badges**: CI status, test coverage, docs.rs, crates.io version, license
+- [x] **Quick Start** (3-step copy-paste):
 
 ```bash
 # 1. Download binary
@@ -759,49 +759,49 @@ echo "Act as a Principal Architect reviewing code..." > .github/review-prompt.md
 # 3. Add to your workflow (see examples/github-actions-workflow/ai-review.yml)
 ```
 
-- [ ] **Feature highlights** with icons:
+- [x] **Feature highlights** with icons:
 
   - Multi-provider (DeepSeek, Kimi, Qwen, OpenRouter, OpenAI)
   - In-memory verdict parsing (no intermediate comments)
   - GitHub Actions + local pre-commit support
   - Configurable prompts per repository
   - Fast: single binary, ~3s execution
-- [ ] **Installation**: Binary download, compile from source, cargo install (when published)
-- [ ] **Usage examples**: CI mode, local mode, with different providers
-- [ ] **Configuration**: Link to `docs/CONFIGURATION.md`
-- [ ] **Provider setup**: Quick links to `docs/PROVIDERS.md`
-- [ ] **Architecture**: Brief overview + link to `docs/ARCHITECTURE.md`
-- [ ] **Contributing**: Link to `CONTRIBUTING.md`
-- [ ] **License**: MIT badge + full text link
+- [x] **Installation**: Binary download, compile from source, cargo install (when published)
+- [x] **Usage examples**: CI mode, local mode, with different providers
+- [x] **Configuration**: Link to `docs/CONFIGURATION.md`
+- [x] **Provider setup**: Quick links to `docs/PROVIDERS.md`
+- [x] **Architecture**: Brief overview + link to `docs/ARCHITECTURE.md`
+- [x] **Contributing**: Link to `CONTRIBUTING.md`
+- [x] **License**: MIT badge + full text link
 
 #### docs/ARCHITECTURE.md
 
-- [ ] System design overview with diagrams (ASCII or mermaid)
-- [ ] In-memory pipeline explanation (why no intermediate comments)
-- [ ] Provider trait design and extension guide
-- [ ] CI vs local mode detection logic
-- [ ] Security model: secret handling, token isolation, permissions
-- [ ] Performance characteristics: latency breakdown, memory usage, binary size
+- [x] System design overview with diagrams (ASCII or mermaid)
+- [x] In-memory pipeline explanation (why no intermediate comments)
+- [x] Provider trait design and extension guide
+- [x] CI vs local mode detection logic
+- [x] Security model: secret handling, token isolation, permissions
+- [x] Performance characteristics: latency breakdown, memory usage, binary size
 
 #### docs/USAGE.md
 
-- [ ] Complete CLI reference with all flags and environment variables
-- [ ] Exit codes reference table
-- [ ] GitHub Actions integration guide with full workflow YAML
-- [ ] Local pre-commit setup with git hook examples
-- [ ] `.reviewer.toml` schema documentation
-- [ ] Troubleshooting section: common errors and solutions
+- [x] Complete CLI reference with all flags and environment variables
+- [x] Exit codes reference table
+- [x] GitHub Actions integration guide with full workflow YAML
+- [x] Local pre-commit setup with git hook examples
+- [x] `.reviewer.toml` schema documentation
+- [x] Troubleshooting section: common errors and solutions
 
 #### docs/API.md
 
-- [ ] Library crate API documentation (if workspace split occurred, otherwise module-level docs)
-- [ ] Examples of using modules as libraries in other Rust projects
-- [ ] Provider trait implementation guide for custom providers
+- [x] Library crate API documentation (if workspace split occurred, otherwise module-level docs)
+- [x] Examples of using modules as libraries in other Rust projects
+- [x] Provider trait implementation guide for custom providers
 
 #### CHANGELOG.md Update
 
-- [ ] Ensure all versions follow [Keep a Changelog](https://keepachangelog.com/) format
-- [ ] Add `[Unreleased]` section for work in progress
+- [x] Ensure all versions follow [Keep a Changelog](https://keepachangelog.com/) format
+- [x] Add `[Unreleased]` section for work in progress
 
 ### Changelog Entry — Phase 4
 
@@ -934,21 +934,21 @@ Register rs-guard on [crates.ai](https://crates.ai) for discovery and distributi
 
 Before registration, all of the following must be complete:
 
-- [ ] `Cargo.toml` has proper metadata:
+- [x] `Cargo.toml` has proper metadata:
   - `name`, `version`, `authors`, `edition`, `license`, `description`, `repository`, `keywords`, `categories`
-- [ ] `README.md` is complete and professional
-- [ ] `CHANGELOG.md` has at least one released version
-- [ ] `LICENSE` file present at root (MIT)
-- [ ] All public API items have doc comments (`#![deny(missing_docs)]`)
-- [ ] `cargo test` passes 100%
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
-- [ ] `cargo deny check` passes (license + security)
-- [ ] `cargo audit` passes (no known vulnerabilities)
-- [ ] Test coverage >= 85% (`cargo tarpaulin`)
-- [ ] Documentation coverage >= 85% (`cargo +nightly doc --show-coverage`)
-- [ ] At least one published GitHub Release with binary asset
-- [ ] CI pipeline is green on `main` branch
+- [x] `README.md` is complete and professional
+- [x] `CHANGELOG.md` has at least one released version
+- [x] `LICENSE` file present at root (MIT)
+- [x] All public API items have doc comments (`#![deny(missing_docs)]`)
+- [x] `cargo test` passes 100%
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` passes
+- [x] `cargo fmt --check` passes
+- [x] `cargo deny check` passes (license + security)
+- [x] `cargo audit` passes (no known vulnerabilities)
+- [x] Test coverage >= 85% (`cargo tarpaulin`)
+- [x] Documentation coverage >= 85% (`cargo +nightly doc --show-coverage`)
+- [x] At least one published GitHub Release with binary asset
+- [x] CI pipeline is green on `main` branch
 
 ### crates.ai Registration Steps
 
@@ -1077,19 +1077,19 @@ runs:
     - name: Run code review
       shell: bash
       env:
-        DIFFGUARD_PROVIDER: ${{ inputs.provider }}
-        DIFFGUARD_MODEL: ${{ inputs.model }}
-        DIFFGUARD_TEMPERATURE: ${{ inputs.temperature }}
-        DIFFGUARD_PROMPT_FILE: ${{ inputs.prompt-file }}
+        RS_GUARD_PROVIDER: ${{ inputs.provider }}
+        RS_GUARD_MODEL: ${{ inputs.model }}
+        RS_GUARD_TEMPERATURE: ${{ inputs.temperature }}
+        RS_GUARD_PROMPT_FILE: ${{ inputs.prompt-file }}
         DEEPSEEK_API_KEY: ${{ inputs.api-key }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         REPO_FULL_NAME: ${{ github.repository }}
       run: |
-        rs-guard --provider "$DIFFGUARD_PROVIDER" \
-                  --model "$DIFFGUARD_MODEL" \
-                  --temperature "$DIFFGUARD_TEMPERATURE" \
-                  --prompt-file "$DIFFGUARD_PROMPT_FILE"
+        rs-guard --provider "$RS_GUARD_PROVIDER" \
+                  --model "$RS_GUARD_MODEL" \
+                  --temperature "$RS_GUARD_TEMPERATURE" \
+                  --prompt-file "$RS_GUARD_PROMPT_FILE"
 
 branding:
   icon: 'shield'

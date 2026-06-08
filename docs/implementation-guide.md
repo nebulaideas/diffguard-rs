@@ -132,7 +132,7 @@ graph TD
     redact["redact.rs<br/>Secret redaction"]
     retry["retry.rs<br/>Retry + circuit breaker"]
     verdict["verdict.rs<br/>Verdict parsing"]
-    error["error.rs<br/>DiffguardError enum"]
+    error["error.rs<br/>RsGuardError enum"]
 
     main --> cli
     main --> config
@@ -200,7 +200,7 @@ Create `src/llm/groq.rs`. The provider uses the `async_trait` crate (already in 
 ```rust
 //! Groq LLM provider implementation.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatRequest, LlmProvider};
 use async_trait::async_trait;
 
@@ -221,7 +221,7 @@ pub struct GroqClient {
 
 impl GroqClient {
     /// Creates a new Groq client with the given API key.
-    pub fn new(api_key: impl Into<String>) -> Result<Self, DiffguardError> {
+    pub fn new(api_key: impl Into<String>) -> Result<Self, RsGuardError> {
         let client = build_llm_client("groq", &api_key.into(), &[])?;
         Ok(Self {
             base_url: DEFAULT_BASE_URL.to_string(),
@@ -261,7 +261,7 @@ impl LlmProvider for GroqClient {
         system_prompt: &str,
         user_message: &str,
         temperature: f32,
-    ) -> Result<String, DiffguardError> {
+    ) -> Result<String, RsGuardError> {
         let request = ChatRequest {
             model: self.model.clone(),
             messages: chat_messages(system_prompt, user_message),
@@ -349,7 +349,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
                     "message": {
-                        "content": "Looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
+                        "content": "Looks good.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
                     }
                 }]
             })))
@@ -415,7 +415,7 @@ After implementing a new provider, verify every item:
 
 ### Why Parse Metadata In-Memory
 
-rs-guard processes the entire review in a single pass. The LLM returns a structured `[DIFFGUARD_VERDICT_METADATA]` block at the end of its response, which `verdict.rs` extracts in-memory.
+rs-guard processes the entire review in a single pass. The LLM returns a structured `[RS_GUARD_VERDICT_METADATA]` block at the end of its response, which `verdict.rs` extracts in-memory.
 
 This design avoids the alternative approach: posting intermediate comments during analysis. A two-step approach (analyze → post comment → parse comment) introduces:
 
@@ -463,14 +463,14 @@ flowchart TD
 
 | Step | Error Type | Behavior |
 |---|---|---|
-| Config resolution | `DiffguardError::Config` | Print error + exit 1 |
-| Diff fetch (CI) | `DiffguardError::GitHubApi` | Propagate with context |
-| Diff fetch (local) | `DiffguardError::EmptyDiff` | Print info + exit 0 |
-| Diff fetch (any) | `DiffguardError::DiffTooLarge` | CI: post explanatory `COMMENT` + exit 0; Local: print warning + exit 0 |
-| LLM call | `DiffguardError::LlmApi` | Retried by `with_retry_simple()` (3 attempts with exponential backoff) |
+| Config resolution | `RsGuardError::Config` | Print error + exit 1 |
+| Diff fetch (CI) | `RsGuardError::GitHubApi` | Propagate with context |
+| Diff fetch (local) | `RsGuardError::EmptyDiff` | Print info + exit 0 |
+| Diff fetch (any) | `RsGuardError::DiffTooLarge` | CI: post explanatory `COMMENT` + exit 0; Local: print warning + exit 0 |
+| LLM call | `RsGuardError::LlmApi` | Retried by `with_retry_simple()` (3 attempts with exponential backoff) |
 | LLM call | Circuit breaker open | Infrastructure exists (`retry.rs`) but circuit breaker is not enabled for LLM calls — only retry with exponential backoff is wired |
-| Verdict parse | `DiffguardError::VerdictParse` | Propagate with context |
-| GitHub submission | `DiffguardError::PermissionDenied` | Fallback to `COMMENT` state |
+| Verdict parse | `RsGuardError::VerdictParse` | Propagate with context |
+| GitHub submission | `RsGuardError::PermissionDenied` | Fallback to `COMMENT` state |
 | Artifact write | `io::Error` | Log warning, do not fail the pipeline |
 | Metrics write | `io::Error` | Log warning, do not fail the pipeline |
 
@@ -742,7 +742,7 @@ The `benches/verdict.rs` file defines 5 Criterion benchmarks covering verdict pa
 
 | Benchmark | What it measures |
 |---|---|
-| `parse_metadata_block` | Regex extraction of `[DIFFGUARD_VERDICT_METADATA]` |
+| `parse_metadata_block` | Regex extraction of `[RS_GUARD_VERDICT_METADATA]` |
 | `evaluate_by_tags` | Fallback tag counting |
 | `parse_no_metadata_fallback` | Metadata miss → tag fallback path |
 | `determine_review_state` | State determination from a `Verdict` struct |

@@ -63,7 +63,6 @@ See [`examples/github-actions-workflow/`](examples/github-actions-workflow/) for
 ### Pre-built binary (Recommended)
 
 Download from [GitHub Releases](https://github.com/nebulaideas/rs-guard/releases).
-
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for platform-specific instructions (Linux, macOS, Windows).
 
 ### Build from source
@@ -84,7 +83,6 @@ cargo install rs-guard
 ```
 
 After installation, the `rs-guard` binary will be available in your `~/.cargo/bin` directory.
-
 **Note:** Requires the crate to be published on crates.io. Before publication, use "Build from source" instead.
 
 ---
@@ -154,7 +152,13 @@ See [docs/USAGE.md](docs/USAGE.md) for the complete reference including all envi
 | `GITHUB_TOKEN` | CI mode | Auto-provided by GitHub Actions |
 | `PR_NUMBER` | CI mode | Pull request number |
 | `REPO_FULL_NAME` | CI mode | Repository in `owner/repo` format |
-| `DIFFGUARD_PROVIDER` | Optional | Override provider via env var |
+| `RS_GUARD_PROVIDER` | Optional | Override provider via env var |
+| `RS_GUARD_MODEL` | Optional | Override model via env var |
+| `RS_GUARD_TEMPERATURE` | Optional | Override temperature via env var |
+| `RS_GUARD_MAX_TOKENS` | Optional | Override max tokens via env var |
+| `RS_GUARD_DIFF_FILE` | Optional | Path to a pre-existing diff file |
+| `RS_GUARD_METRICS_PATH` | Optional | Path for the metrics JSON artifact |
+| `GITHUB_API_URL` | Optional | Custom GitHub API base URL (Enterprise) |
 
 See [docs/PROVIDERS.md](docs/PROVIDERS.md) for per-provider setup details.
 
@@ -239,7 +243,7 @@ All LLM processing is in-memory. No intermediate comments are posted during anal
 # Build
 cargo build
 
-# Full test suite (~170 tests)
+# Full test suite (~235 tests)
 cargo test
 
 # Lint (zero warnings policy)

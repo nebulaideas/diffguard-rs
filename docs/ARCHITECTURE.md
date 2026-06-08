@@ -29,7 +29,7 @@ flowchart TD
     J -->|"Hit"| M
     J -->|"Miss"| K["Call LLM\nprovider.chat_completion()\nwith_retry + circuit breaker"]
     K --> L["Store in Cache\nDiffCache::set()"]
-    L --> M["Parse Verdict\nparse_verdict()\n[DIFFGUARD_VERDICT_METADATA] block"]
+    L --> M["Parse Verdict\nparse_verdict()\n[RS_GUARD_VERDICT_METADATA] block"]
 
     M --> N["Write Artifacts\nreview-result.txt\nrs-guard-metrics.json"]
 
@@ -105,13 +105,15 @@ All providers implement the `LlmProvider` async trait:
 
 ```rust
 #[async_trait]
-pub trait LlmProvider: Send + Sync {
+pub trait LlmProvider: Send + Sync + std::fmt::Debug {
+    fn name(&self) -> &'static str;
+
     async fn chat_completion(
         &self,
         system_prompt: &str,
         user_content: &str,
         temperature: f32,
-    ) -> Result<String, DiffguardError>;
+    ) -> Result<String, RsGuardError>;
 }
 ```
 
@@ -169,7 +171,7 @@ After fetching, `chunk_diff()` trims large diffs to the first 50 + last 50 lines
 The LLM is instructed to append a structured block at the end of its response:
 
 ```
-[DIFFGUARD_VERDICT_METADATA]
+[RS_GUARD_VERDICT_METADATA]
 Verdict: POSITIVE
 CriticalBugs: 0
 SecurityIssues: 0
@@ -256,7 +258,7 @@ See [docs/API.md](API.md#adding-a-new-provider).
 
 ### Adding a New Diff Source
 
-1. Add a new function in `diff.rs` returning `Result<DiffResult, DiffguardError>`
+1. Add a new function in `diff.rs` returning `Result<DiffResult, RsGuardError>`
 2. Add the corresponding CLI flag or env var detection in `cli.rs` / `config.rs`
 3. Add a new branch in the diff-source `if/else` block in `pipeline.rs`
 4. Handle the `DiffTooLarge` case consistently with the existing sources

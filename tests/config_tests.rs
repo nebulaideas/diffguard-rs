@@ -12,9 +12,9 @@ use tempfile::NamedTempFile;
 /// All known env vars that tests may set. Cleared at the start of each test
 /// to prevent parallel test interference.
 const ALL_TEST_ENV_VARS: &[&str] = &[
-    "DIFFGUARD_PROVIDER",
-    "DIFFGUARD_MODEL",
-    "DIFFGUARD_TEMPERATURE",
+    "RS_GUARD_PROVIDER",
+    "RS_GUARD_MODEL",
+    "RS_GUARD_TEMPERATURE",
     "DEEPSEEK_API_KEY",
     "KIMI_API_KEY",
     "MY_KIMI_KEY",
@@ -26,7 +26,7 @@ const ALL_TEST_ENV_VARS: &[&str] = &[
     "GITHUB_TOKEN",
     "PR_NUMBER",
     "REPO_FULL_NAME",
-    "DIFFGUARD_DIFF_FILE",
+    "RS_GUARD_DIFF_FILE",
 ];
 
 /// Removes all known env vars to guarantee a clean slate.
@@ -126,9 +126,9 @@ temperature = 0.5
 
     with_env(
         &[
-            ("DIFFGUARD_PROVIDER", "openai"),
-            ("DIFFGUARD_MODEL", "gpt-4o"),
-            ("DIFFGUARD_TEMPERATURE", "0.7"),
+            ("RS_GUARD_PROVIDER", "openai"),
+            ("RS_GUARD_MODEL", "gpt-4o"),
+            ("RS_GUARD_TEMPERATURE", "0.7"),
             ("OPENAI_API_KEY", "test-openai-key"),
         ],
         || {
@@ -257,7 +257,7 @@ api_key_env = "MY_CUSTOM_KEY"
 #[test]
 #[serial]
 fn test_unknown_provider_returns_error() {
-    with_env(&[("DIFFGUARD_PROVIDER", "nonexistent")], || {
+    with_env(&[("RS_GUARD_PROVIDER", "nonexistent")], || {
         let result = Config::from_env(None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -405,7 +405,7 @@ fn test_ssrf_rejection_in_ci_mode() {
             ("GITHUB_TOKEN", "test-token"),
             ("PR_NUMBER", "42"),
             ("REPO_FULL_NAME", "owner/repo"),
-            ("DIFFGUARD_PROVIDER", "deepseek"),
+            ("RS_GUARD_PROVIDER", "deepseek"),
             ("DEEPSEEK_API_KEY", "test-key-ssrf"),
         ],
         || {

@@ -38,7 +38,7 @@ pub struct Args {
     /// LLM provider to use. Default: deepseek.
     #[arg(
         long,
-        env = "DIFFGUARD_PROVIDER",
+        env = "RS_GUARD_PROVIDER",
         help = "LLM provider to use [default: deepseek]"
     )]
     pub provider: Option<String>,
@@ -64,7 +64,7 @@ pub struct Args {
     /// If the file does not exist, an error is returned.
     #[arg(
         long,
-        env = "DIFFGUARD_DIFF_FILE",
+        env = "RS_GUARD_DIFF_FILE",
         help = "Path to a pre-existing diff file to review"
     )]
     pub diff_file: Option<String>,

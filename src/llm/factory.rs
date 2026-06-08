@@ -1,9 +1,18 @@
 //! Provider factory for creating LLM provider instances by name.
+//!
+//! # Tech Debt
+//!
+//! The five provider implementations (deepseek, kimi, qwen, openrouter, openai)
+//! share ~500 lines of near-identical struct fields, builder methods, and
+//! `chat_completion` logic. Only `OpenRouterClient::with_http_referer` and
+//! `QwenChatRequest::result_format` differ. These should be consolidated into
+//! a single `GenericOpenAiClient` parameterized by [`crate::llm::providers::ProviderMeta`],
+//! with per-provider customisation hooks for headers and request schemas.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::llm::{
     deepseek::DeepSeekClient, kimi::KimiClient, openai::OpenAiClient, openrouter::OpenRouterClient,
-    qwen::QwenClient, Provider, ProviderConfig,
+    providers, qwen::QwenClient, Provider, ProviderConfig,
 };
 
 /// Creates an LLM provider instance based on the given provider name.
@@ -16,13 +25,13 @@ use crate::llm::{
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the provider name is unknown
+/// Returns [`RsGuardError::Config`] if the provider name is unknown
 /// or if the API key contains invalid characters.
 pub fn create_provider(
     provider_name: &str,
     api_key: &str,
     config: &ProviderConfig,
-) -> Result<Provider, DiffguardError> {
+) -> Result<Provider, RsGuardError> {
     match provider_name {
         "deepseek" => {
             let mut client = DeepSeekClient::new(api_key)?;
@@ -77,9 +86,12 @@ pub fn create_provider(
                 .with_max_tokens(config.max_tokens);
             Ok(Box::new(client))
         }
-        other => Err(DiffguardError::Config(format!(
-            "Unknown provider: {}. Supported: deepseek, kimi, qwen, openrouter, openai",
-            other
-        ))),
+        other => {
+            let names = providers::known_provider_names().join(", ");
+            Err(RsGuardError::Config(format!(
+                "Unknown provider: '{}'. Supported: {}",
+                other, names
+            )))
+        }
     }
 }

@@ -3,18 +3,18 @@
 //! Parses structured metadata from LLM responses to determine the appropriate
 //! GitHub review state (`APPROVE`, `REQUEST_CHANGES`, or `COMMENT`).
 //!
-//! The parser first attempts to extract a `[DIFFGUARD_VERDICT_METADATA]` block.
+//! The parser first attempts to extract a `[RS_GUARD_VERDICT_METADATA]` block.
 //! If no metadata block is found, it falls back to counting `[Critical Bug]`
 //! and `[Security]` tags in the response text.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use regex::Regex;
 use std::sync::LazyLock;
 
 /// Compiled regex for extracting the verdict metadata block.
 static METADATA_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"\[DIFFGUARD_VERDICT_METADATA\][\s\S]*?Verdict:\s*(\w+)[\s\S]*?CriticalBugs:\s*(\d+)[\s\S]*?SecurityIssues:\s*(\d+)"
+        r"\[RS_GUARD_VERDICT_METADATA\][\s\S]*?Verdict:\s*(\w+)[\s\S]*?CriticalBugs:\s*(\d+)[\s\S]*?SecurityIssues:\s*(\d+)"
     ).expect("metadata regex is valid")
 });
 
@@ -82,7 +82,7 @@ impl std::fmt::Display for Verdict {
     }
 }
 
-/// Attempts to extract a `[DIFFGUARD_VERDICT_METADATA]` block from the response.
+/// Attempts to extract a `[RS_GUARD_VERDICT_METADATA]` block from the response.
 ///
 /// Returns `None` if the metadata block is not present or cannot be parsed.
 pub fn parse_metadata_block(response: &str) -> Option<Verdict> {
@@ -137,13 +137,13 @@ pub fn determine_review_state(verdict: &Verdict) -> ReviewState {
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::VerdictParse`] if the verdict value is neither
+/// Returns [`RsGuardError::VerdictParse`] if the verdict value is neither
 /// `"POSITIVE"` nor `"NEGATIVE"`.
-pub fn parse_verdict(response: &str) -> Result<(Verdict, ReviewState), DiffguardError> {
+pub fn parse_verdict(response: &str) -> Result<(Verdict, ReviewState), RsGuardError> {
     let verdict = parse_metadata_block(response).unwrap_or_else(|| evaluate_by_tags(response));
 
     if verdict.verdict != "POSITIVE" && verdict.verdict != "NEGATIVE" {
-        return Err(DiffguardError::VerdictParse(format!(
+        return Err(RsGuardError::VerdictParse(format!(
             "Invalid verdict value: {}. Expected POSITIVE or NEGATIVE.",
             verdict.verdict
         )));
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_parse_valid_positive() {
-        let response = "Some review text\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0";
+        let response = "Some review text\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(verdict.verdict, "POSITIVE");
         assert_eq!(verdict.critical_bugs, 0);
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_parse_negative() {
-        let response = "Some review text\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalBugs: 0\nSecurityIssues: 0";
+        let response = "Some review text\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalBugs: 0\nSecurityIssues: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(
             determine_review_state(&verdict),
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn test_parse_critical_gt_2() {
         let response =
-            "[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 5\nSecurityIssues: 0";
+            "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 5\nSecurityIssues: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(
             determine_review_state(&verdict),
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn test_parse_security_gt_0() {
         let response =
-            "[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 1";
+            "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 1";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(
             determine_review_state(&verdict),
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn test_positive_with_minor_bugs() {
         let response =
-            "[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 1\nSecurityIssues: 0";
+            "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 1\nSecurityIssues: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(determine_review_state(&verdict), ReviewState::Comment);
     }

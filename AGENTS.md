@@ -59,7 +59,7 @@ rs-guard/
 │   ├── cli.rs                     # Clap argument parsing
 │   ├── config.rs                  # Env vars + .reviewer.toml parsing
 │   ├── diff.rs                    # PR diff fetching + local diff + chunking
-│   ├── error.rs                   # DiffguardError enum
+│   ├── error.rs                   # RsGuardError enum
 │   ├── github.rs                  # GitHub API review submission
 │   ├── http.rs                    # HTTP utilities + URL validation
 │   ├── llm/                       # LLM provider modules
@@ -138,7 +138,7 @@ rs-guard/
 # Build
 cargo build
 
-# Full test suite (~220 tests)
+# Full test suite (~252 tests)
 cargo test
 
 # Lint (zero warnings required)
@@ -168,15 +168,15 @@ cargo audit
 | `config.rs` | 21 | Integration |
 | `github.rs` | 13 | Inline (wiremock) |
 | `output.rs` | 6 | Inline |
-| `cache.rs` | 13 | Inline |
-| `retry.rs` | 20 (5 retry + 15 circuit breaker) | Inline |
+| `cache.rs` | 19 | Inline |
+| `retry.rs` | 17 (6 retry + 11 circuit breaker) | Inline |
 | `provider*` | 19 (5 inline + 14 integration) | Unit + Integration |
-| `diff.rs` | 12 (4 inline + 8 integration) | Unit + Integration |
+| `diff.rs` | 26 (21 inline + 5 integration) | Unit + Integration |
 | `redact.rs` | 8 | Inline |
 | `pipeline.rs` | 5 | Integration |
 | `http.rs` | 16 | Inline |
 | `cli.rs` | 3 | Inline |
-| **Total** | **~220** | |
+| **Total** | **~252** | |
 
 ---
 
@@ -247,16 +247,16 @@ cargo audit
 | 6.2 — `Cargo.toml` metadata finalized | ✅ Done — version 0.6.0, all fields complete |
 | 6.3 — `README.md` with `cargo install` instructions | ✅ Done |
 | 6.4 — `CHANGELOG.md` with Phase 6 entry | ✅ Done |
-| 6.5 — Publish to crates.io | ⏳ Pending user approval (see Step 8) |
-| 6.6 — Register on crates.ai | ⏳ Pending user approval (see Step 8) |
-| 6.7 — Post-publish verification | ⏳ Pending publication |
+| 6.5 — Publish to crates.io | ✅ Done — [crates.io/crates/rs-guard](https://crates.io/crates/rs-guard) |
+| 6.6 — Register on crates.ai | ✅ Done — [crates.ai/crates/rs-guard](https://crates.ai/crates/rs-guard) |
+| 6.7 — Post-publish verification | ✅ Done |
 
 ---
 
 ## Notes for Agents
 
 - **Source code exists** — all ~4,200 lines across 16 modules.
-- **~220 tests** pass with `wiremock`, `serial_test`, and `tempfile` infrastructure.
+- **~252 tests** pass with `wiremock`, `serial_test`, and `tempfile` infrastructure.
 - **The implementation plan** (`docs/MVP_IMPLEMENTATION_PLAN.md`) is authoritative but section "Phase 0: Pre-requisite Cleanup" was added during Phase 3 implementation.
 - **`Config::empty()`** is a `#[doc(hidden)]` constructor for tests — not for production use.
 - **New modules** added since the original plan: `pipeline.rs`, `http.rs`, `redact.rs`, `cache.rs`, `llm/providers.rs`.

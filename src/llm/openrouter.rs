@@ -3,7 +3,7 @@
 //! Communicates with the OpenRouter unified API, routing to any supported
 //! model. Requires `HTTP-Referer` and `X-Title` headers for attribution.
 
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::llm::{build_llm_client, chat_messages, send_chat_request, ChatRequest, LlmProvider};
 use async_trait::async_trait;
 
@@ -27,7 +27,12 @@ pub struct OpenRouterClient {
 
 impl OpenRouterClient {
     /// Creates a new OpenRouter client with the given API key.
-    pub fn new(api_key: impl Into<String>) -> Result<Self, DiffguardError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RsGuardError::Config`] if the API key contains invalid characters
+    /// or if the HTTP client cannot be built.
+    pub fn new(api_key: impl Into<String>) -> Result<Self, RsGuardError> {
         let api_key_str = api_key.into();
         let extra_headers = &[
             ("HTTP-Referer", DEFAULT_HTTP_REFERER),
@@ -64,9 +69,9 @@ impl OpenRouterClient {
     ///
     /// # Errors
     ///
-    /// Returns [`DiffguardError::Config`] if the referer value contains
+    /// Returns [`RsGuardError::Config`] if the referer value contains
     /// invalid header characters.
-    pub fn with_http_referer(self, referer: &str, api_key: &str) -> Result<Self, DiffguardError> {
+    pub fn with_http_referer(self, referer: &str, api_key: &str) -> Result<Self, RsGuardError> {
         let extra_headers = &[("HTTP-Referer", referer), ("X-Title", "rs-guard")];
         let client = build_llm_client("openrouter", api_key, extra_headers)?;
         Ok(Self { client, ..self })
@@ -84,7 +89,7 @@ impl LlmProvider for OpenRouterClient {
         system_prompt: &str,
         user_message: &str,
         temperature: f32,
-    ) -> Result<String, DiffguardError> {
+    ) -> Result<String, RsGuardError> {
         let request = ChatRequest {
             model: self.model.clone(),
             messages: chat_messages(system_prompt, user_message),
@@ -112,7 +117,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
                     "message": {
-                        "content": "Looks good.\n\n[DIFFGUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
+                        "content": "Looks good.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0"
                     }
                 }]
             })))

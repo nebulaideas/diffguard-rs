@@ -6,7 +6,7 @@
 //! Configuration resolution order: CLI flags > Environment variables > TOML file > Defaults
 
 use crate::cli::Args;
-use crate::error::DiffguardError;
+use crate::error::RsGuardError;
 use crate::http::{validate_github_base_url, validate_provider_base_url};
 use crate::llm::providers::{self, find_provider};
 use crate::llm::ProviderConfig;
@@ -27,7 +27,7 @@ For each finding, explain the problem and suggest a fix.
 
 At the end of your response, include exactly this metadata block (do not modify the format):
 
-[DIFFGUARD_VERDICT_METADATA]
+[RS_GUARD_VERDICT_METADATA]
 Verdict: POSITIVE or NEGATIVE
 CriticalBugs: <count>
 SecurityIssues: <count>
@@ -72,15 +72,15 @@ pub struct TomlConfig {
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the file exists but cannot be read
+/// Returns [`RsGuardError::Config`] if the file exists but cannot be read
 /// or parsed.
-pub fn load_toml_config(path: &Path) -> Result<Option<TomlConfig>, DiffguardError> {
+pub fn load_toml_config(path: &Path) -> Result<Option<TomlConfig>, RsGuardError> {
     if !path.exists() {
         return Ok(None);
     }
 
     let content = std::fs::read_to_string(path).map_err(|e| {
-        DiffguardError::Config(format!(
+        RsGuardError::Config(format!(
             "Failed to read config file '{}': {}",
             path.display(),
             e
@@ -88,7 +88,7 @@ pub fn load_toml_config(path: &Path) -> Result<Option<TomlConfig>, DiffguardErro
     })?;
 
     let config: TomlConfig = toml::from_str(&content).map_err(|e| {
-        DiffguardError::Config(format!(
+        RsGuardError::Config(format!(
             "Failed to parse config file '{}': {}",
             path.display(),
             e
@@ -102,13 +102,13 @@ pub fn load_toml_config(path: &Path) -> Result<Option<TomlConfig>, DiffguardErro
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the provider name is not recognized.
-fn standard_api_key_env_var(provider: &str) -> Result<&'static str, DiffguardError> {
+/// Returns [`RsGuardError::Config`] if the provider name is not recognized.
+fn standard_api_key_env_var(provider: &str) -> Result<&'static str, RsGuardError> {
     find_provider(provider)
         .map(|m| m.api_key_env)
         .ok_or_else(|| {
             let names: Vec<&str> = crate::llm::providers::known_provider_names();
-            DiffguardError::Config(format!(
+            RsGuardError::Config(format!(
                 "Unknown provider: '{}'. Supported: {}",
                 provider,
                 names.join(", ")
@@ -120,13 +120,13 @@ fn standard_api_key_env_var(provider: &str) -> Result<&'static str, DiffguardErr
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the provider name is not recognized.
-fn default_model(provider: &str) -> Result<&'static str, DiffguardError> {
+/// Returns [`RsGuardError::Config`] if the provider name is not recognized.
+fn default_model(provider: &str) -> Result<&'static str, RsGuardError> {
     find_provider(provider)
         .map(|m| m.default_model)
         .ok_or_else(|| {
             let names: Vec<&str> = crate::llm::providers::known_provider_names();
-            DiffguardError::Config(format!(
+            RsGuardError::Config(format!(
                 "Unknown provider: '{}'. Supported: {}",
                 provider,
                 names.join(", ")
@@ -151,10 +151,10 @@ fn default_model(provider: &str) -> Result<&'static str, DiffguardError> {
 ///
 /// # Errors
 ///
-/// Returns [`DiffguardError::Config`] if the URL is malformed.
-fn validate_local_provider_base_url(base_url: &str) -> Result<(), DiffguardError> {
+/// Returns [`RsGuardError::Config`] if the URL is malformed.
+fn validate_local_provider_base_url(base_url: &str) -> Result<(), RsGuardError> {
     let parsed = url::Url::parse(base_url).map_err(|_| {
-        DiffguardError::Config(format!(
+        RsGuardError::Config(format!(
             "Provider base URL is malformed: '{}'. Expected format: https://host/path",
             base_url
         ))
@@ -202,7 +202,7 @@ fn validate_local_provider_base_url(base_url: &str) -> Result<(), DiffguardError
 fn resolve_api_key_env_var(
     provider: &str,
     toml_providers: Option<&HashMap<String, ProviderTomlConfig>>,
-) -> Result<String, DiffguardError> {
+) -> Result<String, RsGuardError> {
     if let Some(providers) = toml_providers {
         if let Some(toml_provider) = providers.get(provider) {
             if let Some(ref env_var) = toml_provider.api_key_env {
@@ -292,9 +292,9 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`DiffguardError::Config`] if the required API key is not set
+    /// Returns [`RsGuardError::Config`] if the required API key is not set
     /// or if the provider name is not recognized.
-    pub fn from_env(toml: Option<TomlConfig>) -> Result<Self, DiffguardError> {
+    pub fn from_env(toml: Option<TomlConfig>) -> Result<Self, RsGuardError> {
         let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
 
         let toml_providers = toml
@@ -303,7 +303,7 @@ impl Config {
             .unwrap_or_default();
 
         // Provider: env > toml > default
-        let provider = std::env::var("DIFFGUARD_PROVIDER")
+        let provider = std::env::var("RS_GUARD_PROVIDER")
             .ok()
             .or_else(|| toml.as_ref().and_then(|t| t.provider.clone()))
             .unwrap_or_else(|| "deepseek".to_string());
@@ -315,7 +315,7 @@ impl Config {
         let api_key_env = resolve_api_key_env_var(&provider, Some(&toml_providers))?;
 
         let api_key = std::env::var(&api_key_env).map_err(|_| {
-            DiffguardError::Config(format!(
+            RsGuardError::Config(format!(
                 "API key not found. Set {} for provider '{}'",
                 api_key_env, provider
             ))
@@ -331,7 +331,7 @@ impl Config {
                 if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
                     (Some(parts[0].to_string()), Some(parts[1].to_string()))
                 } else {
-                    return Err(DiffguardError::Config(format!(
+                    return Err(RsGuardError::Config(format!(
                         "REPO_FULL_NAME must be in 'owner/repo' format, got: '{}'",
                         full
                     )));
@@ -344,23 +344,29 @@ impl Config {
             .unwrap_or_else(|_| "https://api.github.com".to_string());
 
         // Model: env > toml > provider default
-        let env_model = std::env::var("DIFFGUARD_MODEL").ok();
+        let env_model = std::env::var("RS_GUARD_MODEL").ok();
         let toml_model = toml.as_ref().and_then(|t| t.model.clone());
         let model = env_model.or(toml_model).unwrap_or_else(|| {
             default_model(&provider)
-                .unwrap_or("deepseek-v4-flash")
+                .expect("provider already validated above")
                 .to_string()
         });
 
-        // Temperature: env > toml > default
-        let temperature = std::env::var("DIFFGUARD_TEMPERATURE")
+        // Temperature: env > toml > default (validated to [0.0, 2.0])
+        let temperature = std::env::var("RS_GUARD_TEMPERATURE")
             .ok()
             .and_then(|s| s.parse().ok())
             .or(toml.as_ref().and_then(|t| t.temperature))
             .unwrap_or(0.1);
+        if !(0.0..=2.0).contains(&temperature) {
+            return Err(RsGuardError::Config(format!(
+                "Temperature must be between 0.0 and 2.0, got: {}",
+                temperature
+            )));
+        }
 
         // Max tokens: env > toml > none (single source of truth in provider_config)
-        let max_tokens = std::env::var("DIFFGUARD_MAX_TOKENS")
+        let max_tokens = std::env::var("RS_GUARD_MAX_TOKENS")
             .ok()
             .and_then(|s| s.parse().ok())
             .or(toml.as_ref().and_then(|t| t.max_tokens));
@@ -413,14 +419,14 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`DiffguardError::Config`] if the provider changes and the
+    /// Returns [`RsGuardError::Config`] if the provider changes and the
     /// new provider's API key environment variable is not set.
-    pub fn apply_args(&mut self, args: &Args) -> Result<(), DiffguardError> {
+    pub fn apply_args(&mut self, args: &Args) -> Result<(), RsGuardError> {
         if let Some(ref provider) = args.provider {
             if *provider != self.provider {
                 let new_env = resolve_api_key_env_var(provider, Some(&self.toml_providers))?;
                 let new_key = std::env::var(&new_env).map_err(|_| {
-                    DiffguardError::Config(format!(
+                    RsGuardError::Config(format!(
                         "API key not found. Set {} for provider '{}'",
                         new_env, provider
                     ))
@@ -453,7 +459,7 @@ impl Config {
                 // Reset model to new provider's default unless CLI --model was used
                 if !self.model_set_via_cli && args.model.is_none() {
                     self.model = default_model(provider)
-                        .unwrap_or("deepseek-v4-flash")
+                        .expect("provider already validated above")
                         .to_string();
                 }
 
@@ -488,12 +494,11 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`DiffguardError::Config`] if the file exists but cannot be read.
-    pub fn load_prompt_file(&mut self, path: &Path) -> Result<(), DiffguardError> {
+    /// Returns [`RsGuardError::Config`] if the file exists but cannot be read.
+    pub fn load_prompt_file(&mut self, path: &Path) -> Result<(), RsGuardError> {
         if path.exists() {
-            let content = std::fs::read_to_string(path).map_err(|e| {
-                DiffguardError::Config(format!("Failed to read prompt file: {}", e))
-            })?;
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| RsGuardError::Config(format!("Failed to read prompt file: {}", e)))?;
             self.prompt = content;
         }
         Ok(())
@@ -507,23 +512,23 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`DiffguardError::Config`] if validation fails.
-    pub fn validate_for_ci(&self) -> Result<(), DiffguardError> {
+    /// Returns [`RsGuardError::Config`] if validation fails.
+    pub fn validate_for_ci(&self) -> Result<(), RsGuardError> {
         validate_github_base_url(&self.github_base_url)?;
 
         if self.is_ci {
             if self.github_token.is_none() {
-                return Err(DiffguardError::Config(
+                return Err(RsGuardError::Config(
                     "GITHUB_TOKEN is required in CI mode".to_string(),
                 ));
             }
             if self.pr_number.is_none() {
-                return Err(DiffguardError::Config(
+                return Err(RsGuardError::Config(
                     "PR_NUMBER is required in CI mode".to_string(),
                 ));
             }
             if self.repo_owner.is_none() || self.repo_name.is_none() {
-                return Err(DiffguardError::Config(
+                return Err(RsGuardError::Config(
                     "REPO_FULL_NAME is required in CI mode (format: owner/repo)".to_string(),
                 ));
             }
@@ -640,5 +645,142 @@ mod tests {
         // Known hosts should not warn
         let result = validate_local_provider_base_url("https://api.deepseek.com/v1");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_ci_local_mode_valid() {
+        let mut config = Config::empty();
+        config.is_ci = false;
+        config.github_base_url = "https://api.github.com".to_string();
+        assert!(config.validate_for_ci().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_ci_missing_github_token() {
+        let mut config = Config::empty();
+        config.is_ci = true;
+        config.github_base_url = "https://api.github.com".to_string();
+        config.github_token = None;
+        config.pr_number = Some(1);
+        config.repo_owner = Some("owner".to_string());
+        config.repo_name = Some("repo".to_string());
+        let result = config.validate_for_ci();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn test_validate_for_ci_missing_pr_number() {
+        let mut config = Config::empty();
+        config.is_ci = true;
+        config.github_base_url = "https://api.github.com".to_string();
+        config.github_token = Some("token".to_string());
+        config.pr_number = None;
+        config.repo_owner = Some("owner".to_string());
+        config.repo_name = Some("repo".to_string());
+        let result = config.validate_for_ci();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("PR_NUMBER"));
+    }
+
+    #[test]
+    fn test_validate_for_ci_missing_repo_owner() {
+        let mut config = Config::empty();
+        config.is_ci = true;
+        config.github_base_url = "https://api.github.com".to_string();
+        config.github_token = Some("token".to_string());
+        config.pr_number = Some(1);
+        config.repo_owner = None;
+        config.repo_name = Some("repo".to_string());
+        let result = config.validate_for_ci();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("REPO_FULL_NAME"));
+    }
+
+    #[test]
+    fn test_validate_for_ci_missing_repo_name() {
+        let mut config = Config::empty();
+        config.is_ci = true;
+        config.github_base_url = "https://api.github.com".to_string();
+        config.github_token = Some("token".to_string());
+        config.pr_number = Some(1);
+        config.repo_owner = Some("owner".to_string());
+        config.repo_name = None;
+        let result = config.validate_for_ci();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("REPO_FULL_NAME"));
+    }
+
+    #[test]
+    fn test_validate_for_ci_all_fields_present() {
+        let mut config = Config::empty();
+        config.is_ci = true;
+        config.github_base_url = "https://api.github.com".to_string();
+        config.github_token = Some("token".to_string());
+        config.pr_number = Some(42);
+        config.repo_owner = Some("owner".to_string());
+        config.repo_name = Some("repo".to_string());
+        assert!(config.validate_for_ci().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_ci_invalid_base_url() {
+        let mut config = Config::empty();
+        config.is_ci = true;
+        config.github_base_url = "http://evil.com".to_string();
+        config.github_token = Some("token".to_string());
+        config.pr_number = Some(1);
+        config.repo_owner = Some("owner".to_string());
+        config.repo_name = Some("repo".to_string());
+        let result = config.validate_for_ci();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_prompt_file_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let prompt_path = dir.path().join("prompt.md");
+        std::fs::write(&prompt_path, "Custom review prompt").unwrap();
+
+        let mut config = Config::empty();
+        config.load_prompt_file(&prompt_path).unwrap();
+        assert_eq!(config.prompt, "Custom review prompt");
+    }
+
+    #[test]
+    fn test_load_prompt_file_missing_file_keeps_default() {
+        let mut config = Config::empty();
+        config.prompt = "default prompt".to_string();
+        let result = config.load_prompt_file(std::path::Path::new("/nonexistent/prompt.md"));
+        assert!(result.is_ok());
+        assert_eq!(config.prompt, "default prompt");
+    }
+
+    #[test]
+    fn test_load_prompt_file_unreadable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let prompt_path = dir.path().join("unreadable.md");
+        std::fs::write(&prompt_path, "content").unwrap();
+        // Make file unreadable by removing permissions
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            &prompt_path,
+            std::os::unix::fs::PermissionsExt::from_mode(0o000),
+        )
+        .unwrap();
+
+        let mut config = Config::empty();
+        let result = config.load_prompt_file(&prompt_path);
+
+        // Restore permissions for cleanup
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&prompt_path, PermissionsExt::from_mode(0o644)).ok();
+        }
+
+        // On Unix, unreadable files should error; on other platforms, may succeed
+        #[cfg(unix)]
+        assert!(result.is_err());
     }
 }

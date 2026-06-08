@@ -57,7 +57,7 @@ Create `.git/hooks/pre-commit`:
 export DEEPSEEK_API_KEY="your-api-key"
 
 # Optional: override provider/model
-export DIFFGUARD_PROVIDER="deepseek"
+export RS_GUARD_PROVIDER="deepseek"
 
 echo "Running rs-guard pre-commit review..."
 

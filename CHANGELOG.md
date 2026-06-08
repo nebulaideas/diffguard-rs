@@ -147,7 +147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release with DeepSeek provider support (`deepseek-v4-flash`)
 - GitHub Actions integration: fetches PR diffs and submits review states
-- In-memory verdict parsing (`[DIFFGUARD_VERDICT_METADATA]` block)
+- In-memory verdict parsing (`[RS_GUARD_VERDICT_METADATA]` block)
 - Three review states: `APPROVE`, `REQUEST_CHANGES`, `COMMENT`
 - Permission fallback: downgrades to `COMMENT` when approval/rejection is not permitted
 - Dismissal of previous rs-guard `CHANGES_REQUESTED` reviews (identified by `<!-- rs-guard-bot -->` HTML comment signature) when new state is non-blocking
