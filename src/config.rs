@@ -214,7 +214,7 @@ fn resolve_api_key_env_var(
 }
 
 /// Resolved application configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     /// LLM provider name (e.g. `"deepseek"`).
     pub provider: String,
@@ -246,9 +246,17 @@ pub struct Config {
     /// When `false` and the provider changes, the model resets to the new provider's default.
     /// Env/TOML model values are NOT carried across provider changes.
     model_set_via_cli: bool,
+    /// Bypass the response cache, forcing an LLM API call.
+    pub no_cache: bool,
 }
 
 impl Config {
+    /// Creates an empty config with default values, useful for tests.
+    #[doc(hidden)]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
     /// Builds configuration from environment variables with optional TOML defaults.
     ///
     /// Resolution order: Environment variables > TOML file > Hardcoded defaults.
@@ -366,6 +374,7 @@ impl Config {
             provider_config,
             toml_providers,
             model_set_via_cli: false,
+            no_cache: false,
         })
     }
 
@@ -440,6 +449,9 @@ impl Config {
         }
         if let Some(max_tokens) = args.max_tokens {
             self.provider_config.max_tokens = Some(max_tokens);
+        }
+        if args.no_cache {
+            self.no_cache = true;
         }
 
         Ok(())

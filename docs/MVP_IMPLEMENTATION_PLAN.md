@@ -480,6 +480,72 @@ Extend `src/llm/` to support multiple LLM providers. Add `.reviewer.toml` config
 
 ---
 
+## Phase 0: Pre-requisite Cleanup
+
+### Goal
+
+Address code quality, test coverage, and testability issues discovered during
+codebase review before implementing Phase 3 features.
+
+### Rationale
+
+Running Phase 3 on top of untested modules (github.rs, output.rs) and
+untestable code (process::exit in run_pipeline) would produce fragile
+results. These fixes ensure the foundation is solid.
+
+### Deliverables
+
+#### P0.1: Remove `process::exit` from `run_pipeline()` (exit signal)
+
+- [x] **Decision:** Introduce `PipelineResult` enum with `Success` and `ReviewBlocked` variants
+- `run_pipeline()` returns `Result<PipelineResult>` instead of calling `process::exit`
+- `main()` maps `ReviewBlocked => std::process::exit(2)`
+- Enables unit testing of local-mode `REQUEST_CHANGES` path
+- Files: `src/main.rs`
+
+#### P0.2: Add `github.rs` test suite
+
+- [x] 13 wiremock tests covering: submit_review, retry, permission fallback, dismissal logic, URL validation
+- Files: `src/github.rs` (inline `#[cfg(test)]`), `tests/github_tests.rs`
+
+#### P0.3: Add `output.rs` test suite
+
+- [x] **Decision:** Refactor `print_colored_report` and `print_colored_summary` to accept `impl Write`
+- [x] 6 tests covering: write_artifact content/integrity, error propagation, formatting functions
+- Files: `src/output.rs` (inline `#[cfg(test)]` + refactor)
+
+#### P0.4: Enable `#![deny(missing_docs)]`
+
+- [x] Add lint to `src/lib.rs` — no missing docs found (all public items already documented)
+
+#### P0.5: Update `AGENTS.md`
+
+- [ ] Reflect current state: Phase 1 + 2 complete, Phase 3 in progress
+
+#### P0.6: DRY — Extract diff-fetch error handling (deferred)
+
+- [ ] **Deferred.** The three diff sources (file, CI, local) have genuinely different behaviors:
+  file/local print warnings, CI submits a GitHub comment for `DiffTooLarge`. Extracting
+  would introduce more complexity than it removes. Revisit if a 4th diff source is added.
+
+#### P0.7: DRY — Shared HTTP client builder
+
+- [x] Extract `build_github_http_client()` into `src/http.rs`
+- [x] Eliminated 3 duplicate `reqwest::Client::builder()` chains
+- Files: `src/http.rs`, `src/github.rs`, `src/diff.rs`
+
+#### P0.8: Add `tests/test_data/` directory
+
+- [x] Sample diffs, LLM response fixtures for integration tests
+
+#### P0.9: Add full pipeline integration test
+
+- [x] End-to-end with mock GitHub + mock LLM (5 scenarios: approve, request changes, dismissal, local, empty diff)
+- Files: `tests/integration_tests.rs`
+- **Bug found:** CI mode was missing `EmptyDiff` handler — fixed during test implementation
+
+---
+
 ## Phase 3: Advanced Features
 
 ### Goal
@@ -488,26 +554,31 @@ Add production-hardening features: diff chunking for large PRs, response caching
 
 ### Deliverables
 
-#### Diff Chunking
+#### Diff Chunking (Task 3.4)
 
-- [ ] Detect diff size against model context window
-- [ ] Truncation strategy: preserve first N and last N lines, summarize middle section with placeholder
-- [ ] Configurable `max_tokens` in `.reviewer.toml`
-- [ ] Warning when diff is truncated (included in review comment)
+- [x] **Decision:** Default truncation preserves 50 head / 50 tail lines
+- [x] Detect diff size against model context window via `chunk_diff()` in `src/diff.rs`
+- [x] Truncation strategy: preserve first 50 and last 50 lines, summarize middle with placeholder
+- [x] Configurable `max_tokens` in `.reviewer.toml` (already exists)
+- [x] Warning when diff is truncated (included in review comment body)
+- [x] 4 inline tests for chunking logic
 
-#### Response Caching
+#### Response Caching (Task 3.1)
 
-- [ ] Cache LLM responses by diff content hash (SHA-256)
-- [ ] Cache location: `~/.cache/diffguard/responses/` or project-local `.diffguard/cache/`
-- [ ] TTL: 24 hours by default, configurable
-- [ ] Skip cache with `--no-cache` flag
-- [ ] Cache hit logged in CI output for transparency
+- [x] **Decision:** Use `.diffguard/cache/` (project-local), auto-add to `.gitignore`
+- [x] Cache LLM responses by diff content hash (SHA-256) — `src/cache.rs`
+- [x] Cache location: `.diffguard/cache/` (project root)
+- [x] Auto-create `.gitignore` entry for `.diffguard/cache/` on first use
+- [x] TTL: 24 hours by default, configurable in `.reviewer.toml`
+- [x] Skip cache with `--no-cache` flag
+- [x] Cache hit logged in CI output for transparency
+- [x] 8 inline tests for cache logic
 
-#### Metrics Export
+#### Metrics Export (Task 3.2)
 
-- [ ] Track per-run metrics: token usage (input/output), API latency, cost estimate
-- [ ] Export as JSON artifact: `diffguard-metrics.json`
-- [ ] Console summary in CI logs:
+- [x] Track per-run metrics: token usage (input/output), API latency, cost estimate
+- [x] Export as JSON artifact: `diffguard-metrics.json`
+- [x] Console summary in CI logs:
   ```
   diffguard-rs Review Complete
   =============================
@@ -521,21 +592,25 @@ Add production-hardening features: diff chunking for large PRs, response caching
   State:       APPROVE
   ```
 
-#### Enhanced CI Pipeline
+#### Enhanced CI Pipeline (Task 3.5)
 
-- [ ] `.github/workflows/ci.yml` additions:
+- [x] `.github/workflows/ci.yml` additions:
   - `cargo-deny check` for license + security audit
   - `cargo-audit` for vulnerability scanning
-  - Benchmark comparison against baseline (`cargo bench`)
-- [ ] `.github/workflows/docs-deploy.yml` — Deploy `cargo doc` to GitHub Pages
+  - Benchmark comparison against baseline (`cargo bench`) — `benches/verdict.rs` with 5 criterion benchmarks
+- [x] `.github/workflows/docs-deploy.yml` — Deploy `cargo doc` to GitHub Pages
 
-#### Error Recovery
+#### Error Recovery (Task 3.3)
 
-- [ ] Retry logic for transient failures (5xx, 429):
-  - Exponential backoff: 1s, 2s, 4s, 8s
+- [x] **Decision:** Simple opt-in circuit breaker — Closed/Open only (no half-open for v1)
+  - Threshold: 3 consecutive failures, Cooldown: 60s auto-reset
+  - Configurable via `.reviewer.toml`: `[circuit_breaker] enabled = false, threshold = 3, cooldown_secs = 60`
+  - Default: **disabled**
+- [x] Retry logic for transient failures (5xx, 429):
+  - Exponential backoff: 1s, 2s, 4s (base 1s, ×2 multiplier)
   - Max 3 retries per request
-  - Jitter to avoid thundering herd
-- [ ] Circuit breaker pattern: skip LLM call if provider has failed N times recently
+  - Jitter: ±25% random variation on each delay
+- [x] 10 inline tests for retry + circuit breaker
 
 ### Changelog Entry — Phase 3
 
@@ -552,10 +627,23 @@ Add production-hardening features: diff chunking for large PRs, response caching
 - Circuit breaker pattern for failing providers
 - `cargo-deny` and `cargo-audit` integrated in CI
 - Documentation auto-deployment to GitHub Pages
+- Cache size limit with automatic cleanup of old entries
+- Thread-safe circuit breaker implementation
+- Cost estimation using integer cents to avoid floating point precision issues
 
 ### Changed
 - `fetch_pr_diff()` now returns diff + size metadata for chunking decisions
 - `LlmProvider::chat_completion()` accepts optional `max_tokens` parameter
+- Cache stores timestamp in file instead of using mtime for reliability
+- Chunking preserves original line endings and uses `Cow<str>` to avoid allocations
+- `print_colored_report` and `print_colored_summary` now return `io::Result` for proper error handling
+- Chunking warning now shown in both CI and local modes
+
+### Fixed
+- Cache `ensure_gitignored` now logs warnings on failure instead of silently failing
+- Circuit breaker is now thread-safe with `Arc<Mutex<>>` for concurrent access
+- Line ending preservation in diff chunking
+- Ignored write errors in output functions
 ```
 
 ---
@@ -916,3 +1004,31 @@ If `REQUEST_CHANGES` or `APPROVE` fails due to GitHub permissions, fallback to `
 ## Appendix E: License Note
 
 The root `LICENSE` file is **MIT** (Copyright 2026 Nebula Ideas). Earlier versions of this plan referenced Apache-2.0; the root `LICENSE` file takes precedence. If you wish to change the license, update both the `LICENSE` file and `Cargo.toml` `license` field before publishing.
+
+---
+
+## Appendix F: Decision Log
+
+Record of architectural and design decisions made during implementation.
+
+| Date | Decision | Option Chosen | Rationale |
+|------|----------|---------------|-----------|
+| 2026-06-07 | P0.1: Exit signal mechanism | `PipelineResult` enum | Keeps `run_pipeline` testable; semantically clear vs `anyhow::Result<i32>` or error variant abuse |
+| 2026-06-07 | P0.3: Testing print functions | Refactor to `impl Write` | Enables fast, deterministic buffer-based testing; small refactor cost |
+| 2026-06-07 | 3.1: Cache location | `.diffguard/cache/` (project-local) | Per-project isolation; auto-gitignore for convenience |
+| 2026-06-07 | 3.3: Circuit breaker complexity | Simple Closed/Open only, opt-in, default disabled | 90% of value for 10% of complexity; half-open tracking adds ~80 LOC for rare edge case |
+| 2026-06-07 | 3.4: Truncation defaults | 50 head / 50 tail lines | Reasonable balance for most model context windows (~8K tokens) |
+| 2026-06-07 | 3.5: Benchmark library | Criterion (0.5) with HTML reports | Industry standard, stable Rust support, detailed output |
+| 2026-06-07 | 3.5: Docs deploy | GitHub Pages via `actions/deploy-pages@v4` | Free, zero-config, auto-updates on push to main |
+| 2026-06-07 | Code Review: Cache timestamp | Store timestamp in file instead of mtime | mtime is unreliable (system clock changes, file copies); file content is authoritative |
+| 2026-06-07 | Code Review: Cache size limit | 100MB default with LRU cleanup | Prevents unbounded disk usage; LRU ensures most useful entries are kept |
+| 2026-06-07 | Code Review: Circuit breaker thread safety | `Arc<Mutex<>>` wrapping internal state | Enables safe concurrent access from multiple async tasks |
+| 2026-06-07 | Code Review: Cost calculation | Integer cents instead of floating point | Avoids floating point precision issues; simpler arithmetic |
+| 2026-06-07 | Code Review: Chunking allocation | `Cow<str>` return type | Avoids allocation when no chunking needed; zero-cost abstraction |
+| 2026-06-07 | Code Review: Output error handling | Return `io::Result` from print functions | Proper error propagation instead of silently ignoring I/O errors |
+| 2026-06-07 | Code Review: Chunking warning consistency | Show warning in both CI and local modes | Consistent user experience; users should know when diff is truncated |
+| 2026-06-07 | Code Review: CI dependency caching | `Swatinem/rust-cache@v2` | Significantly speeds up CI builds by caching dependencies |
+| 2026-06-07 | P0.6: DRY diff-fetch handling | **Deferred** | Three diff sources have different behavior (CI submits GitHub comment); extraction would add complexity |
+| 2026-06-07 | 3.4: Truncation defaults | 50 head / 50 tail lines | Reasonable balance for most model context windows (~8K tokens) |
+| 2026-06-07 | 3.5: Benchmark library | Criterion (0.5) with HTML reports | Industry standard, stable Rust support, detailed output |
+| 2026-06-07 | 3.5: Docs deploy | GitHub Pages via `actions/deploy-pages@v4` | Free, zero-config, auto-updates on push to main |
