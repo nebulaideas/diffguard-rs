@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `ensure_gitignored()` now returns `Result` instead of silently logging warnings
+- `ensure_gitignore()` now writes `.gitignore` at the git repository root (via `find_git_root()`) instead of the current working directory, preventing incorrect `.gitignore` creation when invoked from subdirectories
 - `CacheConfig` includes `auto_gitignore` field (default: `true`)
+- **BREAKING:** `ReviewMetrics::estimated_cost_cents` changed from `u64` to `f64` to avoid integer truncation for small diffs. Consumers parsing `rs-guard-metrics.json` must update their type expectations
 
 ## [0.7.1] - 2026-06-08
 

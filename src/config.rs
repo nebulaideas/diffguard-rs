@@ -996,4 +996,40 @@ mod tests {
         config.apply_args(&args).unwrap();
         assert!(config.dry_run);
     }
+
+    #[test]
+    fn test_circuit_breaker_disabled_produces_none() {
+        let toml = TomlConfig {
+            circuit_breaker: Some(CircuitBreakerTomlConfig {
+                enabled: false,
+                threshold: Some(5),
+                cooldown_secs: Some(120),
+            }),
+            ..Default::default()
+        };
+
+        let config = Config::from_env(Some(toml)).unwrap();
+        assert!(
+            config.circuit_breaker.is_none(),
+            "circuit_breaker should be None when enabled=false"
+        );
+    }
+
+    #[test]
+    fn test_circuit_breaker_enabled_produces_some() {
+        let toml = TomlConfig {
+            circuit_breaker: Some(CircuitBreakerTomlConfig {
+                enabled: true,
+                threshold: Some(5),
+                cooldown_secs: Some(120),
+            }),
+            ..Default::default()
+        };
+
+        let config = Config::from_env(Some(toml)).unwrap();
+        assert!(
+            config.circuit_breaker.is_some(),
+            "circuit_breaker should be Some when enabled=true"
+        );
+    }
 }

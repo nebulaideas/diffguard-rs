@@ -448,11 +448,16 @@ pub async fn run_pipeline(
 /// Non-ASCII characters (Unicode, emoji, CJK, etc.) are estimated at
 /// ~1.5 chars per token, since they typically consume more bytes per token.
 fn estimate_tokens(text: &str) -> usize {
-    let ascii_chars = text.chars().filter(|c| c.is_ascii()).count();
-    let non_ascii_chars = text.chars().filter(|c| !c.is_ascii()).count();
+    let (ascii_chars, non_ascii_chars) =
+        text.chars()
+            .fold((0usize, 0usize), |(ascii, non_ascii), c| {
+                if c.is_ascii() {
+                    (ascii + 1, non_ascii)
+                } else {
+                    (ascii, non_ascii + 1)
+                }
+            });
 
-    // ASCII: ~4 chars per token
-    // Non-ASCII: ~1.5 chars per token (rough estimate)
     let ascii_tokens = ascii_chars / 4;
     let non_ascii_tokens = (non_ascii_chars as f64 / 1.5) as usize;
 
@@ -611,7 +616,32 @@ mod tests {
 
     #[test]
     fn test_check_token_warning_above_threshold() {
-        // Should not panic when above 80%
         check_token_warning(110_000, 128_000, "deepseek");
+    }
+
+    #[test]
+    fn test_estimate_cost_cents_pricing_override_miss_falls_to_default() {
+        let mut pricing = std::collections::HashMap::new();
+        pricing.insert(
+            "openai".to_string(),
+            crate::config::PricingTomlConfig {
+                input_per_million: 100,
+                output_per_million: 200,
+            },
+        );
+        let cost = estimate_cost_cents("deepseek", 1_000_000, 1_000_000, Some(&pricing));
+        assert!((cost - 34.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_check_token_warning_at_exact_threshold() {
+        check_token_warning(800, 1000, "test");
+        check_token_warning(801, 1000, "test");
+    }
+
+    #[test]
+    fn test_estimate_tokens_emoji() {
+        let text = "\u{1f389}".repeat(15);
+        assert_eq!(estimate_tokens(&text), 10);
     }
 }
