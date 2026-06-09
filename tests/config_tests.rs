@@ -15,6 +15,7 @@ const ALL_TEST_ENV_VARS: &[&str] = &[
     "RS_GUARD_PROVIDER",
     "RS_GUARD_MODEL",
     "RS_GUARD_TEMPERATURE",
+    "RS_GUARD_MAX_TOKENS",
     "DEEPSEEK_API_KEY",
     "KIMI_API_KEY",
     "MY_KIMI_KEY",
@@ -176,6 +177,7 @@ fn test_provider_switch_via_apply_args() {
                 temperature: Some(0.1),
                 max_tokens: None,
                 providers: None,
+                ..Default::default()
             });
 
             let mut config = Config::from_env(toml).unwrap();
@@ -200,6 +202,7 @@ fn test_cli_model_override() {
             temperature: Some(0.1),
             max_tokens: None,
             providers: None,
+            ..Default::default()
         });
 
         let mut config = Config::from_env(toml).unwrap();
@@ -280,6 +283,7 @@ fn test_model_resets_on_provider_change_when_not_explicit() {
                 temperature: None,
                 max_tokens: None,
                 providers: None,
+                ..Default::default()
             });
 
             let mut config = Config::from_env(toml).unwrap();
@@ -309,6 +313,7 @@ fn test_toml_model_not_carried_across_provider_change() {
                 temperature: None,
                 max_tokens: None,
                 providers: None,
+                ..Default::default()
             });
 
             let mut config = Config::from_env(toml).unwrap();
@@ -338,6 +343,7 @@ fn test_cli_model_preserved_across_provider_change() {
                 temperature: None,
                 max_tokens: None,
                 providers: None,
+                ..Default::default()
             });
 
             let mut config = Config::from_env(toml).unwrap();
@@ -382,6 +388,7 @@ fn test_apply_args_respects_toml_api_key_env_on_switch() {
                     );
                     m
                 }),
+                ..Default::default()
             });
 
             let mut config = Config::from_env(toml).unwrap();
@@ -426,6 +433,7 @@ fn test_ssrf_rejection_in_ci_mode() {
                     );
                     m
                 }),
+                ..Default::default()
             });
 
             let result = Config::from_env(toml);
@@ -467,6 +475,7 @@ fn test_ssrf_allows_known_host_in_ci() {
                     );
                     m
                 }),
+                ..Default::default()
             });
 
             let config = Config::from_env(toml).unwrap();
@@ -499,6 +508,7 @@ fn test_ssrf_allows_any_host_in_local_mode() {
                 );
                 m
             }),
+            ..Default::default()
         });
 
         let config = Config::from_env(toml).unwrap();
@@ -547,6 +557,7 @@ fn test_ssrf_rejection_on_apply_args_switch_in_ci() {
                     );
                     m
                 }),
+                ..Default::default()
             });
 
             let mut config = Config::from_env(toml).unwrap();
@@ -591,6 +602,7 @@ fn test_base_url_cleared_on_switch_without_toml_entry() {
                     );
                     m
                 }),
+                ..Default::default()
             });
 
             let mut config = Config::from_env(toml).unwrap();
@@ -641,6 +653,7 @@ fn test_base_url_preserved_on_switch_with_toml_entry() {
                     );
                     m
                 }),
+                ..Default::default()
             });
 
             let mut config = Config::from_env(toml).unwrap();
@@ -670,6 +683,7 @@ fn test_model_synced_after_switch_with_cli_model() {
                 temperature: None,
                 max_tokens: None,
                 providers: None,
+                ..Default::default()
             });
 
             let mut config = Config::from_env(toml).unwrap();
@@ -777,4 +791,94 @@ fn test_temperature_env_var_negative_returns_error() {
             );
         },
     );
+}
+
+// ---------------------------------------------------------------------------
+// Issues #7 & #29 — Configurable chunking thresholds via TOML
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn test_toml_chunk_thresholds_parsed_and_applied() {
+    // chunk_head_lines and chunk_tail_lines in .reviewer.toml must flow
+    // through Config and be used by the pipeline's chunk_diff_with_params call.
+    let file = write_toml(
+        br#"provider = "deepseek"
+chunk_head_lines = 200
+chunk_tail_lines = 100
+"#,
+    );
+
+    with_env(&[("DEEPSEEK_API_KEY", "test-deepseek-key")], || {
+        let toml = load_toml_config(file.path()).unwrap();
+        let config = Config::from_env(toml).unwrap();
+        assert_eq!(config.chunk_head_lines, 200);
+        assert_eq!(config.chunk_tail_lines, 100);
+    });
+}
+
+#[test]
+#[serial]
+fn test_default_chunk_thresholds_when_not_set() {
+    // When not set in TOML, config uses the DEFAULT_CHUNK_HEAD/TAIL_LINES values.
+    with_env(&[("DEEPSEEK_API_KEY", "test-deepseek-key")], || {
+        let config = Config::from_env(None).unwrap();
+        assert_eq!(
+            config.chunk_head_lines,
+            rs_guard::diff::DEFAULT_CHUNK_HEAD_LINES
+        );
+        assert_eq!(
+            config.chunk_tail_lines,
+            rs_guard::diff::DEFAULT_CHUNK_TAIL_LINES
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Issue #30 — max_tokens safe default (DEFAULT_MAX_TOKENS = 4096)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn test_default_max_tokens_applied_when_not_set() {
+    // When RS_GUARD_MAX_TOKENS is unset and TOML has no max_tokens,
+    // Config must use DEFAULT_MAX_TOKENS (4096) to prevent truncated verdicts.
+    with_env(&[("DEEPSEEK_API_KEY", "test-deepseek-key")], || {
+        let config = Config::from_env(None).unwrap();
+        assert_eq!(
+            config.provider_config.max_tokens,
+            Some(rs_guard::config::DEFAULT_MAX_TOKENS),
+            "max_tokens should default to DEFAULT_MAX_TOKENS when not configured"
+        );
+    });
+}
+
+#[test]
+#[serial]
+fn test_env_max_tokens_overrides_default() {
+    with_env(
+        &[
+            ("DEEPSEEK_API_KEY", "test-deepseek-key"),
+            ("RS_GUARD_MAX_TOKENS", "8192"),
+        ],
+        || {
+            let config = Config::from_env(None).unwrap();
+            assert_eq!(config.provider_config.max_tokens, Some(8192));
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn test_toml_max_tokens_overrides_default() {
+    let file = write_toml(
+        br#"provider = "deepseek"
+max_tokens = 2048
+"#,
+    );
+    with_env(&[("DEEPSEEK_API_KEY", "test-deepseek-key")], || {
+        let toml = load_toml_config(file.path()).unwrap();
+        let config = Config::from_env(toml).unwrap();
+        assert_eq!(config.provider_config.max_tokens, Some(2048));
+    });
 }

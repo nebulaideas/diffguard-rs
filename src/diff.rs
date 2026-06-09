@@ -17,11 +17,16 @@ const MAX_DIFF_LINES: usize = 1500;
 /// HTTP request timeout for diff fetching.
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Number of lines to preserve from the head when chunking a large diff.
-const CHUNK_HEAD_LINES: usize = 50;
+/// Default number of lines to preserve from the head when chunking a large diff.
+///
+/// Raised from 50 to 400 to better utilise modern LLM context windows
+/// (DeepSeek 64K, Kimi/GPT-4o-mini 128K). The combined default of 800 lines
+/// covers the full diff for the vast majority of real PRs while still fitting
+/// comfortably within the smallest supported context window.
+pub const DEFAULT_CHUNK_HEAD_LINES: usize = 400;
 
-/// Number of lines to preserve from the tail when chunking a large diff.
-const CHUNK_TAIL_LINES: usize = 50;
+/// Default number of lines to preserve from the tail when chunking a large diff.
+pub const DEFAULT_CHUNK_TAIL_LINES: usize = 400;
 
 /// Placeholder inserted in place of chunked middle lines.
 const CHUNK_PLACEHOLDER: &str = "\n# ... [diff truncated: {removed} lines omitted] ...\n";
@@ -70,12 +75,13 @@ fn validate_diff_content(content: &str) -> Result<(), RsGuardError> {
 
 /// Chunks a large diff by preserving the first N and last N lines.
 ///
-/// When a diff exceeds `CHUNK_HEAD_LINES` + `CHUNK_TAIL_LINES`, the middle
-/// section is replaced with a placeholder indicating how many lines were removed.
-/// This keeps review context windows manageable for very large diffs.
+/// When the diff exceeds `head_lines + tail_lines`, the middle section is
+/// replaced with a placeholder. Returns the original content unchanged (as a
+/// borrowed reference) when no truncation is needed, avoiding allocation.
 ///
-/// Returns the original diff unchanged (as a borrowed reference) if it is already
-/// small enough, avoiding unnecessary allocations.
+/// Uses [`DEFAULT_CHUNK_HEAD_LINES`] and [`DEFAULT_CHUNK_TAIL_LINES`] as
+/// defaults. Pass explicit values via [`chunk_diff_with_params`] when the
+/// caller has per-provider or user-configured thresholds.
 ///
 /// # Arguments
 ///
@@ -83,9 +89,31 @@ fn validate_diff_content(content: &str) -> Result<(), RsGuardError> {
 ///
 /// # Returns
 ///
-/// A tuple of (chunked_content, was_truncated, removed_lines).
-/// The chunked_content is a `Cow<str>` to avoid allocation when no chunking is needed.
+/// A tuple of `(chunked_content, was_truncated, removed_lines)`.
 pub fn chunk_diff(content: &str) -> (Cow<'_, str>, bool, usize) {
+    chunk_diff_with_params(content, DEFAULT_CHUNK_HEAD_LINES, DEFAULT_CHUNK_TAIL_LINES)
+}
+
+/// Chunks a large diff with explicit head and tail line counts.
+///
+/// When the diff exceeds `head_lines + tail_lines`, the middle section is
+/// replaced with a placeholder. Returns the original content unchanged (as a
+/// borrowed reference) when no truncation is needed, avoiding allocation.
+///
+/// # Arguments
+///
+/// * `content` — The full diff content.
+/// * `head_lines` — Number of lines to keep from the beginning.
+/// * `tail_lines` — Number of lines to keep from the end.
+///
+/// # Returns
+///
+/// A tuple of `(chunked_content, was_truncated, removed_lines)`.
+pub fn chunk_diff_with_params(
+    content: &str,
+    head_lines: usize,
+    tail_lines: usize,
+) -> (Cow<'_, str>, bool, usize) {
     // Detect line ending style from the original content
     let has_crlf = content.contains("\r\n");
     let line_ending = if has_crlf { "\r\n" } else { "\n" };
@@ -93,15 +121,15 @@ pub fn chunk_diff(content: &str) -> (Cow<'_, str>, bool, usize) {
 
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len();
-    let threshold = CHUNK_HEAD_LINES + CHUNK_TAIL_LINES;
+    let threshold = head_lines + tail_lines;
 
     if total <= threshold {
         return (Cow::Borrowed(content), false, 0);
     }
 
-    let head = &lines[..CHUNK_HEAD_LINES];
-    let tail = &lines[total - CHUNK_TAIL_LINES..];
-    let removed = total - CHUNK_HEAD_LINES - CHUNK_TAIL_LINES;
+    let head = &lines[..head_lines];
+    let tail = &lines[total - tail_lines..];
+    let removed = total - head_lines - tail_lines;
     let placeholder = CHUNK_PLACEHOLDER.replace("{removed}", &removed.to_string());
 
     let mut result = String::with_capacity(content.len() / 2);
@@ -440,11 +468,12 @@ mod tests {
 
     #[test]
     fn test_chunk_diff_truncates_large_diff() {
-        // Generate 200 lines
+        // Use explicit 50/50 params to test truncation behaviour
+        // independent of the default constants.
         let lines: Vec<String> = (0..200).map(|i| format!("line {}", i)).collect();
         let content = lines.join("\n");
 
-        let (result, truncated, removed) = chunk_diff(&content);
+        let (result, truncated, removed) = chunk_diff_with_params(&content, 50, 50);
         assert!(truncated);
         // 200 - 50 - 50 = 100 removed
         assert_eq!(removed, 100);
@@ -460,11 +489,11 @@ mod tests {
 
     #[test]
     fn test_chunk_diff_exactly_at_threshold_unchanged() {
-        // 100 lines = exactly threshold (50 + 50)
+        // 100 lines = exactly threshold with explicit 50+50 params
         let lines: Vec<String> = (0..100).map(|i| format!("line {}", i)).collect();
         let content = lines.join("\n");
 
-        let (result, truncated, _) = chunk_diff(&content);
+        let (result, truncated, _) = chunk_diff_with_params(&content, 50, 50);
         assert!(!truncated);
         assert_eq!(result.as_ref(), content);
     }
@@ -474,7 +503,7 @@ mod tests {
         let lines: Vec<String> = (0..150).map(|i| format!("line {}", i)).collect();
         let content = lines.join("\n");
 
-        let (result, truncated, _) = chunk_diff(&content);
+        let (result, truncated, _) = chunk_diff_with_params(&content, 50, 50);
         assert!(truncated);
 
         // Head lines should appear before the placeholder
@@ -488,22 +517,22 @@ mod tests {
 
     #[test]
     fn test_chunk_diff_preserves_line_endings() {
-        // Test with content that has trailing newline
+        // Test with content that has trailing newline, using explicit 50+50 params
         let lines: Vec<String> = (0..150).map(|i| format!("line {}", i)).collect();
         let content = lines.join("\n") + "\n";
 
-        let (result, truncated, _) = chunk_diff(&content);
+        let (result, truncated, _) = chunk_diff_with_params(&content, 50, 50);
         assert!(truncated);
         assert!(result.ends_with('\n'));
     }
 
     #[test]
     fn test_chunk_diff_preserves_crlf_line_endings() {
-        // Test with CRLF line endings (Windows-style)
+        // Test with CRLF line endings (Windows-style), using explicit 50+50 params
         let lines: Vec<String> = (0..150).map(|i| format!("line {}", i)).collect();
         let content = lines.join("\r\n") + "\r\n";
 
-        let (result, truncated, removed) = chunk_diff(&content);
+        let (result, truncated, removed) = chunk_diff_with_params(&content, 50, 50);
         assert!(truncated);
         assert_eq!(removed, 50); // 150 - 50 head - 50 tail
                                  // Result should use CRLF line endings
@@ -527,6 +556,69 @@ mod tests {
         assert!(!truncated);
         // This would fail to compile if result was not Cow
         assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    // --- New default-threshold tests (issues #7 & #29) ---
+
+    #[test]
+    fn test_chunk_diff_default_does_not_truncate_200_lines() {
+        // 200 lines is well below the new 800-line default threshold — should pass unchanged
+        let lines: Vec<String> = (0..200).map(|i| format!("line {}", i)).collect();
+        let content = lines.join("\n");
+
+        let (result, truncated, removed) = chunk_diff(&content);
+        assert!(
+            !truncated,
+            "200-line diff should not be truncated at new 800-line default"
+        );
+        assert_eq!(removed, 0);
+        assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn test_chunk_diff_default_truncates_at_1000_lines() {
+        // 1000 lines exceeds the 800-line default threshold
+        let lines: Vec<String> = (0..1000).map(|i| format!("line {}", i)).collect();
+        let content = lines.join("\n");
+
+        let (result, truncated, removed) = chunk_diff(&content);
+        assert!(
+            truncated,
+            "1000-line diff should be truncated at 800-line default"
+        );
+        // 1000 - 400 head - 400 tail = 200 removed
+        assert_eq!(removed, 200);
+        assert!(result.contains("200 lines omitted"));
+    }
+
+    #[test]
+    fn test_chunk_diff_default_exactly_at_threshold() {
+        // 800 lines = exactly the new default threshold, should NOT truncate
+        let lines: Vec<String> = (0..800).map(|i| format!("line {}", i)).collect();
+        let content = lines.join("\n");
+
+        let (result, truncated, _) = chunk_diff(&content);
+        assert!(
+            !truncated,
+            "800-line diff at threshold should not be truncated"
+        );
+        assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn test_chunk_diff_with_params_custom_thresholds() {
+        // Verify chunk_diff_with_params honours custom head/tail counts
+        let lines: Vec<String> = (0..100).map(|i| format!("line {}", i)).collect();
+        let content = lines.join("\n");
+
+        let (result, truncated, removed) = chunk_diff_with_params(&content, 20, 20);
+        assert!(truncated);
+        assert_eq!(removed, 60); // 100 - 20 - 20
+        assert!(result.contains("line 0"));
+        assert!(result.contains("line 19"));
+        assert!(result.contains("line 80"));
+        assert!(result.contains("line 99"));
+        assert!(!result.contains("line 50")); // middle omitted
     }
 
     #[test]

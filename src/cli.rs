@@ -72,6 +72,13 @@ pub struct Args {
     /// Bypass the response cache, forcing an LLM API call.
     #[arg(long, help = "Bypass response cache and force LLM API call")]
     pub no_cache: bool,
+
+    /// Run the full pipeline but do not submit reviews or block commits.
+    ///
+    /// Useful for testing configuration and prompt changes without affecting
+    /// the repository. Always exits with code 0.
+    #[arg(long, help = "Dry-run mode: review without submitting or blocking")]
+    pub dry_run: bool,
 }
 
 /// Validates that a temperature value is within the OpenAI-compatible range (0.0 - 2.0).
