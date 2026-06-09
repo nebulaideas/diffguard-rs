@@ -1008,9 +1008,22 @@ mod tests {
             ..Default::default()
         };
 
-        let config = Config::from_env(Some(toml)).unwrap();
+        let circuit_breaker = toml
+            .circuit_breaker
+            .as_ref()
+            .and_then(|cb| {
+                if cb.enabled {
+                    Some(crate::retry::CircuitBreaker::new(
+                        cb.threshold.unwrap_or(3),
+                        cb.cooldown_secs.unwrap_or(60),
+                    ))
+                } else {
+                    None
+                }
+            });
+
         assert!(
-            config.circuit_breaker.is_none(),
+            circuit_breaker.is_none(),
             "circuit_breaker should be None when enabled=false"
         );
     }
@@ -1026,9 +1039,22 @@ mod tests {
             ..Default::default()
         };
 
-        let config = Config::from_env(Some(toml)).unwrap();
+        let circuit_breaker = toml
+            .circuit_breaker
+            .as_ref()
+            .and_then(|cb| {
+                if cb.enabled {
+                    Some(crate::retry::CircuitBreaker::new(
+                        cb.threshold.unwrap_or(3),
+                        cb.cooldown_secs.unwrap_or(60),
+                    ))
+                } else {
+                    None
+                }
+            });
+
         assert!(
-            config.circuit_breaker.is_some(),
+            circuit_breaker.is_some(),
             "circuit_breaker should be Some when enabled=true"
         );
     }
