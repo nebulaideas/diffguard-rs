@@ -13,7 +13,7 @@ use crate::output::{
     ARTIFACT_FILENAME, METRICS_FILENAME,
 };
 use crate::redact::{log_redacted, redact_secrets};
-use crate::retry::with_retry_simple;
+use crate::retry::with_retry;
 use crate::verdict::{parse_metadata_block, parse_verdict, ReviewState};
 use anyhow::Context;
 use std::path::PathBuf;
@@ -191,18 +191,28 @@ pub async fn run_pipeline(
             .as_ref()
             .map(PathBuf::from)
             .unwrap_or_else(|| CacheConfig::default().cache_dir),
+        auto_gitignore: config.auto_gitignore,
         ..CacheConfig::default()
     };
     let cache = DiffCache::new(cache_config).context("Failed to initialize response cache")?;
 
     // Only auto-add to .gitignore in local mode — CI environments are often read-only
     if !config.is_ci {
-        cache.ensure_gitignored();
+        if let Err(e) = cache.ensure_gitignored() {
+            log::warn!("Failed to update .gitignore: {}", e);
+        }
     }
 
     // --- Metrics collection ---
     let start = std::time::Instant::now();
-    let estimated_tokens_in = (config.prompt.len() + diff_content.len()) / 4; // rough: ~4 chars/token
+    let estimated_tokens_in = estimate_tokens(&config.prompt) + estimate_tokens(&diff_content);
+
+    // Warn if estimated tokens approach provider context window limits
+    if let Some(context_window) =
+        crate::llm::providers::get_provider_context_window(&config.provider)
+    {
+        check_token_warning(estimated_tokens_in, context_window, &config.provider);
+    }
 
     // Check cache before calling the LLM (keyed on actual content sent to LLM)
     let llm_response = if let Some(cached) = cache.get(
@@ -215,17 +225,26 @@ pub async fn run_pipeline(
         log::info!("Cache hit — using cached LLM response");
         cached
     } else {
-        log::info!("Calling {} ({})...", config.provider, config.model);
+        if !config.is_ci {
+            println!("🤖 Calling {} ({})...", config.provider, config.model);
+        }
         let provider = create_provider(&config.provider, &config.api_key, &config.provider_config)
             .context("Failed to create LLM provider")?;
 
-        let response = with_retry_simple(|| async {
-            provider
-                .chat_completion(&config.prompt, &diff_content, config.temperature)
-                .await
-        })
+        let response = with_retry(
+            || async {
+                provider
+                    .chat_completion(&config.prompt, &diff_content, config.temperature)
+                    .await
+            },
+            config.circuit_breaker.as_ref(),
+        )
         .await
         .context("LLM API call failed")?;
+
+        if !config.is_ci {
+            println!("✅ Response received ({} chars)", response.len());
+        }
 
         log::info!("Caching LLM response for future runs");
         if let Err(e) = cache.set(
@@ -242,11 +261,12 @@ pub async fn run_pipeline(
     };
 
     let latency = start.elapsed();
-    let estimated_tokens_out = llm_response.len() / 4; // rough: ~4 chars/token
+    let estimated_tokens_out = estimate_tokens(&llm_response);
     let estimated_cost_cents = estimate_cost_cents(
         &config.provider,
         estimated_tokens_in as u64,
         estimated_tokens_out as u64,
+        config.pricing.as_ref(),
     );
 
     log::info!("Received LLM response ({} chars)", llm_response.len());
@@ -380,7 +400,7 @@ pub async fn run_pipeline(
         println!("Est. Tokens In:  {}", estimated_tokens_in);
         println!("Est. Tokens Out: {}", estimated_tokens_out);
         println!("Latency:     {:.1}s", latency.as_secs_f64());
-        println!("Est. Cost:   ${:.4}", estimated_cost_cents as f64 / 100.0);
+        println!("Est. Cost:   ${:.4}", estimated_cost_cents / 100.0);
         println!("Diff Lines:  {}", diff_result.line_count);
         println!("Verdict:     {}", verdict.verdict);
         println!("State:       {}", state);
@@ -422,22 +442,81 @@ pub async fn run_pipeline(
     }
 }
 
+/// Estimates token count for a piece of text using a hybrid heuristic.
+///
+/// ASCII characters are estimated at ~4 chars per token.
+/// Non-ASCII characters (Unicode, emoji, CJK, etc.) are estimated at
+/// ~1.5 chars per token, since they typically consume more bytes per token.
+fn estimate_tokens(text: &str) -> usize {
+    let (ascii_chars, non_ascii_chars) =
+        text.chars()
+            .fold((0usize, 0usize), |(ascii, non_ascii), c| {
+                if c.is_ascii() {
+                    (ascii + 1, non_ascii)
+                } else {
+                    (ascii, non_ascii + 1)
+                }
+            });
+
+    let ascii_tokens = ascii_chars / 4;
+    let non_ascii_tokens = (non_ascii_chars as f64 / 1.5) as usize;
+
+    ascii_tokens + non_ascii_tokens
+}
+
+/// Warns when estimated tokens approach the provider's context window limit.
+///
+/// Prints a warning to stderr when `estimated_tokens` exceeds 80% of the
+/// provider's known context window.
+fn check_token_warning(estimated_tokens: usize, context_window: usize, provider: &str) {
+    let threshold = (context_window as f64 * 0.8) as usize;
+    if estimated_tokens > threshold {
+        eprintln!(
+            "⚠️  Warning: Estimated input tokens ({}) approach 80% of {} context window ({} tokens).\n\
+             Consider using a smaller diff or a provider with a larger context window.",
+            estimated_tokens, provider, context_window
+        );
+    }
+}
+
 /// Rough cost estimation based on provider pricing.
 ///
-/// Returns estimated cost in cents (USD) for a given provider's token usage.
-fn estimate_cost_cents(provider: &str, tokens_in: u64, tokens_out: u64) -> u64 {
+/// Returns estimated cost in **cents** (USD) as `f64` to avoid integer
+/// truncation for small diffs. For display, divide by 100.0.
+///
+/// Pricing can be overridden via `.reviewer.toml` [pricing] sections.
+fn estimate_cost_cents(
+    provider: &str,
+    tokens_in: u64,
+    tokens_out: u64,
+    pricing_overrides: Option<&std::collections::HashMap<String, crate::config::PricingTomlConfig>>,
+) -> f64 {
     // Prices in cents per million tokens
-    let (price_in_cents, price_out_cents) = match provider {
-        "deepseek" => (7, 27),    // DeepSeek-V4: $0.07/M in, $0.27/M out
-        "kimi" => (12, 70),       // Kimi K2.5: approximate
-        "qwen" => (8, 20),        // Qwen-Plus: approximate
-        "openrouter" => (15, 60), // OpenRouter avg: approximate
-        "openai" => (15, 60),     // GPT-4o-mini: $0.15/M in, $0.60/M out
-        _ => (10, 30),            // Default fallback
+    let (price_in_cents, price_out_cents) = if let Some(pricing) = pricing_overrides {
+        if let Some(p) = pricing.get(provider) {
+            (p.input_per_million as f64, p.output_per_million as f64)
+        } else {
+            default_pricing(provider)
+        }
+    } else {
+        default_pricing(provider)
     };
-    let cost_in = (tokens_in * price_in_cents) / 1_000_000;
-    let cost_out = (tokens_out * price_out_cents) / 1_000_000;
+
+    let cost_in = (tokens_in as f64 * price_in_cents) / 1_000_000.0;
+    let cost_out = (tokens_out as f64 * price_out_cents) / 1_000_000.0;
     cost_in + cost_out
+}
+
+/// Returns hardcoded default pricing for known providers.
+fn default_pricing(provider: &str) -> (f64, f64) {
+    match provider {
+        "deepseek" => (7.0, 27.0),    // DeepSeek-V4: $0.07/M in, $0.27/M out
+        "kimi" => (12.0, 70.0),       // Kimi K2.5: approximate
+        "qwen" => (8.0, 20.0),        // Qwen-Plus: approximate
+        "openrouter" => (15.0, 60.0), // OpenRouter avg: approximate
+        "openai" => (15.0, 60.0),     // GPT-4o-mini: $0.15/M in, $0.60/M out
+        _ => (10.0, 30.0),            // Default fallback
+    }
 }
 
 #[cfg(test)]
@@ -447,43 +526,122 @@ mod tests {
     #[test]
     fn test_estimate_cost_cents_deepseek() {
         // 1M tokens in, 1M tokens out should cost 7 + 27 = 34 cents
-        let cost = estimate_cost_cents("deepseek", 1_000_000, 1_000_000);
-        assert_eq!(cost, 34);
+        let cost = estimate_cost_cents("deepseek", 1_000_000, 1_000_000, None);
+        assert!((cost - 34.0).abs() < 0.001);
     }
 
     #[test]
     fn test_estimate_cost_cents_openai() {
         // 1M tokens in, 1M tokens out should cost 15 + 60 = 75 cents
-        let cost = estimate_cost_cents("openai", 1_000_000, 1_000_000);
-        assert_eq!(cost, 75);
+        let cost = estimate_cost_cents("openai", 1_000_000, 1_000_000, None);
+        assert!((cost - 75.0).abs() < 0.001);
     }
 
     #[test]
     fn test_estimate_cost_cents_unknown_provider() {
         // Unknown provider should use default pricing: 10 + 30 = 40 cents
-        let cost = estimate_cost_cents("unknown", 1_000_000, 1_000_000);
-        assert_eq!(cost, 40);
+        let cost = estimate_cost_cents("unknown", 1_000_000, 1_000_000, None);
+        assert!((cost - 40.0).abs() < 0.001);
     }
 
     #[test]
     fn test_estimate_cost_cents_zero_tokens() {
-        let cost = estimate_cost_cents("deepseek", 0, 0);
-        assert_eq!(cost, 0);
+        let cost = estimate_cost_cents("deepseek", 0, 0, None);
+        assert_eq!(cost, 0.0);
     }
 
     #[test]
-    fn test_estimate_cost_cents_small_tokens() {
+    fn test_estimate_cost_cents_small_tokens_no_truncation() {
         // 1000 tokens in, 500 tokens out
-        // DeepSeek: (1000 * 7) / 1_000_000 + (500 * 27) / 1_000_000 = 0 + 0 = 0 cents
-        let cost = estimate_cost_cents("deepseek", 1000, 500);
-        assert_eq!(cost, 0); // Rounds down to 0
+        // DeepSeek: (1000 * 7.0) / 1_000_000 + (500 * 27.0) / 1_000_000 = 0.007 + 0.0135 = 0.0205 cents
+        let cost = estimate_cost_cents("deepseek", 1000, 500, None);
+        assert!((cost - 0.0205).abs() < 0.0001);
     }
 
     #[test]
     fn test_estimate_cost_cents_large_tokens() {
         // 10M tokens in, 5M tokens out
-        // DeepSeek: (10_000_000 * 7) / 1_000_000 + (5_000_000 * 27) / 1_000_000 = 70 + 135 = 205 cents
-        let cost = estimate_cost_cents("deepseek", 10_000_000, 5_000_000);
-        assert_eq!(cost, 205);
+        // DeepSeek: (10_000_000 * 7.0) / 1_000_000 + (5_000_000 * 27.0) / 1_000_000 = 70 + 135 = 205 cents
+        let cost = estimate_cost_cents("deepseek", 10_000_000, 5_000_000, None);
+        assert!((cost - 205.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_estimate_cost_cents_with_pricing_override() {
+        let mut pricing = std::collections::HashMap::new();
+        pricing.insert(
+            "deepseek".to_string(),
+            crate::config::PricingTomlConfig {
+                input_per_million: 10,
+                output_per_million: 50,
+            },
+        );
+        let cost = estimate_cost_cents("deepseek", 1_000_000, 1_000_000, Some(&pricing));
+        assert!((cost - 60.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_estimate_tokens_ascii() {
+        // 40 ASCII chars ≈ 10 tokens
+        let text = "a".repeat(40);
+        assert_eq!(estimate_tokens(&text), 10);
+    }
+
+    #[test]
+    fn test_estimate_tokens_non_ascii() {
+        // 15 non-ASCII chars ≈ 10 tokens (15 / 1.5 = 10)
+        let text = "中".repeat(15);
+        assert_eq!(estimate_tokens(&text), 10);
+    }
+
+    #[test]
+    fn test_estimate_tokens_mixed() {
+        // 20 ASCII chars (5 tokens) + 15 non-ASCII chars (10 tokens) = 15 tokens
+        let ascii = "a".repeat(20);
+        let non_ascii = "中".repeat(15);
+        let text = format!("{}{}", ascii, non_ascii);
+        assert_eq!(estimate_tokens(&text), 15);
+    }
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn test_check_token_warning_below_threshold() {
+        // Should not panic or print when below 80%
+        check_token_warning(1000, 128_000, "deepseek");
+    }
+
+    #[test]
+    fn test_check_token_warning_above_threshold() {
+        check_token_warning(110_000, 128_000, "deepseek");
+    }
+
+    #[test]
+    fn test_estimate_cost_cents_pricing_override_miss_falls_to_default() {
+        let mut pricing = std::collections::HashMap::new();
+        pricing.insert(
+            "openai".to_string(),
+            crate::config::PricingTomlConfig {
+                input_per_million: 100,
+                output_per_million: 200,
+            },
+        );
+        let cost = estimate_cost_cents("deepseek", 1_000_000, 1_000_000, Some(&pricing));
+        assert!((cost - 34.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_check_token_warning_at_exact_threshold() {
+        check_token_warning(800, 1000, "test");
+        check_token_warning(801, 1000, "test");
+    }
+
+    #[test]
+    fn test_estimate_tokens_emoji() {
+        let text = "\u{1f389}".repeat(15);
+        assert_eq!(estimate_tokens(&text), 10);
     }
 }

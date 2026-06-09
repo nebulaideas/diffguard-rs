@@ -80,6 +80,8 @@ pub struct CacheConfig {
     pub enabled: bool,
     /// Maximum total size of cache in bytes.
     pub max_size_bytes: u64,
+    /// Whether to automatically add the cache directory to `.gitignore`.
+    pub auto_gitignore: bool,
 }
 
 impl Default for CacheConfig {
@@ -89,6 +91,7 @@ impl Default for CacheConfig {
             ttl: Duration::from_secs(DEFAULT_TTL_SECS),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         }
     }
 }
@@ -443,51 +446,42 @@ impl DiffCache {
     /// Adds the configured cache directory to the project's `.gitignore` if the file
     /// does not already contain an entry for the cache directory.
     ///
-    /// Logs a warning if the operation fails.
-    pub fn ensure_gitignored(&self) {
-        if !self.config.enabled {
-            return;
+    /// Returns `Ok(())` if the entry already exists, was successfully added, or if
+    /// caching is disabled. Returns `Err` only on unexpected filesystem errors.
+    pub fn ensure_gitignored(&self) -> Result<(), RsGuardError> {
+        if !self.config.enabled || !self.config.auto_gitignore {
+            return Ok(());
         }
 
-        let gitignore_path = Path::new(".gitignore");
+        let gitignore_path = find_git_root()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+            .join(".gitignore");
         let cache_dir_str = self.config.cache_dir.to_string_lossy();
         let entry = format!("{}\n", cache_dir_str);
 
-        // Check if entry already exists using exact line matching
-        match fs::read_to_string(gitignore_path) {
+        match fs::read_to_string(&gitignore_path) {
             Ok(content) => {
-                // Check for exact line match (with or without trailing slash)
                 let has_entry = content
                     .lines()
                     .any(|line| line == cache_dir_str || line == format!("{}/", cache_dir_str));
                 if has_entry {
-                    return;
+                    return Ok(());
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // .gitignore doesn't exist, will create
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
-                log::warn!("Failed to read .gitignore: {}", e);
-                return;
+                return Err(RsGuardError::Io(e));
             }
         }
 
-        // Append entry
-        match fs::OpenOptions::new()
+        let mut f = fs::OpenOptions::new()
             .append(true)
             .create(true)
-            .open(gitignore_path)
-        {
-            Ok(mut f) => {
-                if let Err(e) = f.write_all(entry.as_bytes()) {
-                    log::warn!("Failed to write to .gitignore: {}", e);
-                }
-            }
-            Err(e) => {
-                log::warn!("Failed to open .gitignore for writing: {}", e);
-            }
-        }
+            .open(&gitignore_path)
+            .map_err(RsGuardError::Io)?;
+
+        f.write_all(entry.as_bytes()).map_err(RsGuardError::Io)?;
+        Ok(())
     }
 
     /// Clears all cache entries.
@@ -600,6 +594,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -608,7 +603,7 @@ mod tests {
         std::env::set_current_dir(dir.path()).unwrap();
 
         // First call should create .gitignore
-        cache.ensure_gitignored();
+        cache.ensure_gitignored().unwrap();
         let gitignore_path = dir.path().join(".gitignore");
         assert!(gitignore_path.exists());
         let content = std::fs::read_to_string(&gitignore_path).unwrap();
@@ -616,7 +611,7 @@ mod tests {
         let line_count_before = content.lines().count();
 
         // Second call should not duplicate the entry
-        cache.ensure_gitignored();
+        cache.ensure_gitignored().unwrap();
         let content_after = std::fs::read_to_string(&gitignore_path).unwrap();
         let line_count_after = content_after.lines().count();
         // Line count should be the same (no new lines added)
@@ -636,6 +631,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -648,11 +644,67 @@ mod tests {
         std::fs::write(&gitignore_path, ".rs-guard/cache2/").unwrap();
 
         // Should add the entry since it's not an exact match
-        cache.ensure_gitignored();
+        cache.ensure_gitignored().unwrap();
         let content = std::fs::read_to_string(&gitignore_path).unwrap();
         assert!(content.contains(".rs-guard/cache"));
 
         // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_gitignore_auto_gitignore_false_skips_write() {
+        let dir = tempdir().unwrap();
+        let cache_dir = Path::new(DEFAULT_CACHE_DIR);
+        let config = CacheConfig {
+            cache_dir: cache_dir.to_path_buf(),
+            ttl: Duration::from_secs(3600),
+            enabled: true,
+            max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: false,
+        };
+        let cache = DiffCache::new(config).unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Should not create .gitignore when auto_gitignore is false
+        cache.ensure_gitignored().unwrap();
+        let gitignore_path = dir.path().join(".gitignore");
+        assert!(
+            !gitignore_path.exists(),
+            ".gitignore should not be created when auto_gitignore=false"
+        );
+
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_gitignore_disabled_cache_skips_write() {
+        let dir = tempdir().unwrap();
+        let cache_dir = Path::new(DEFAULT_CACHE_DIR);
+        let config = CacheConfig {
+            cache_dir: cache_dir.to_path_buf(),
+            ttl: Duration::from_secs(3600),
+            enabled: false,
+            max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
+        };
+        let cache = DiffCache::new(config).unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Should not create .gitignore when cache is disabled
+        cache.ensure_gitignored().unwrap();
+        let gitignore_path = dir.path().join(".gitignore");
+        assert!(
+            !gitignore_path.exists(),
+            ".gitignore should not be created when cache is disabled"
+        );
+
         std::env::set_current_dir(original_dir).unwrap();
     }
 
@@ -664,6 +716,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: false,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -690,6 +743,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -721,6 +775,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -737,6 +792,7 @@ mod tests {
             ttl: Duration::from_secs(0), // Zero TTL = immediately expired
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -769,6 +825,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
 
         DiffCache::new(config).unwrap();
@@ -783,6 +840,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -807,6 +865,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: 100, // Very small limit
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -837,6 +896,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -864,6 +924,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: 1000,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -888,6 +949,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -910,6 +972,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -937,6 +1000,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -964,6 +1028,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -991,6 +1056,7 @@ mod tests {
             ttl: Duration::from_secs(3600),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
         };
         let cache = DiffCache::new(config).unwrap();
 
@@ -1008,5 +1074,81 @@ mod tests {
         assert!(cache
             .get("key4", "prompt", "deepseek", "model", 0.1)
             .is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_find_git_root_in_git_repo() {
+        // This test runs inside the rs-guard repo, so git root should be found
+        let root = find_git_root();
+        assert!(root.is_some(), "should find git root in a git repository");
+        let root = root.unwrap();
+        assert!(root.exists(), "git root should exist");
+        // Should contain .git directory
+        assert!(root.join(".git").exists() || root.join(".git").is_symlink());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_default_cache_dir_uses_git_root() {
+        let cache_dir = default_cache_dir();
+        // Should end with .rs-guard/cache
+        assert!(
+            cache_dir.to_string_lossy().ends_with(".rs-guard/cache"),
+            "cache dir should end with .rs-guard/cache, got: {:?}",
+            cache_dir
+        );
+    }
+
+    #[test]
+    fn test_cache_config_with_custom_dir() {
+        let dir = tempdir().unwrap();
+        let custom_dir = dir.path().join("custom/cache");
+        let config = CacheConfig {
+            cache_dir: custom_dir.clone(),
+            ttl: Duration::from_secs(3600),
+            enabled: true,
+            max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
+        };
+        let cache = DiffCache::new(config).unwrap();
+        assert!(custom_dir.exists(), "custom cache dir should be created");
+
+        cache
+            .set("key", "prompt", "deepseek", "model", 0.1, "value")
+            .unwrap();
+        let result = cache.get("key", "prompt", "deepseek", "model", 0.1);
+        assert_eq!(result, Some("value".to_string()));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[cfg(unix)]
+    fn test_gitignore_readonly_returns_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let cache_dir = dir.path().join(DEFAULT_CACHE_DIR);
+        let config = CacheConfig {
+            cache_dir: cache_dir.to_path_buf(),
+            ttl: Duration::from_secs(3600),
+            enabled: true,
+            max_size_bytes: DEFAULT_MAX_SIZE_BYTES,
+            auto_gitignore: true,
+        };
+        let cache = DiffCache::new(config).unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let gitignore_path = dir.path().join(".gitignore");
+        std::fs::write(&gitignore_path, "existing\n").unwrap();
+        std::fs::set_permissions(&gitignore_path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let result = cache.ensure_gitignored();
+        assert!(result.is_err(), "should fail on read-only .gitignore");
+
+        std::fs::set_permissions(&gitignore_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::env::set_current_dir(original_dir).unwrap();
     }
 }

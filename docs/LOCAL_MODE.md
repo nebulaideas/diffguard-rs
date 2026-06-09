@@ -107,6 +107,12 @@ rs-guard --provider kimi
 
 # With custom config
 rs-guard --config ./my-review-config.toml
+
+# Test configuration without blocking the commit
+rs-guard --dry-run
+
+# Force a fresh review (bypass cache)
+rs-guard --no-cache
 ```
 
 ---
@@ -147,3 +153,4 @@ States are color-coded:
 - **Diff too large?** Local mode warns and exits `0` (does not block).
 - **Want a custom prompt?** Use `--prompt-file` or create `.github/review-prompt.md`.
 - **Need faster reviews?** Use a smaller/faster model like `deepseek-v4-flash`.
+- **Progress indicators** — In local mode, rs-guard prints `🤖 Calling {provider} ({model})...` before the LLM call and `✅ Response received (N chars)` after, so you know the tool is working.

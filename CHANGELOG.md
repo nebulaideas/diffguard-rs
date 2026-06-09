@@ -5,7 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.1] - 2025-06-08
+## [Unreleased]
+
+### Added
+
+- `--dry-run` CLI flag to run the full pipeline without submitting reviews or blocking commits
+- `cache_dir` config field for custom cache directory path
+- `circuit_breaker` config field for optional circuit breaker configuration
+- `pricing` config field for per-provider pricing overrides
+- `chunk_head_lines` and `chunk_tail_lines` config fields for diff chunking control
+- `auto_gitignore` config option to control `.gitignore` auto-modification behavior
+- Hybrid ASCII/non-ASCII token estimation (`estimate_tokens`) for more accurate cost estimates
+- User-facing progress indicators in local mode (🤖 before LLM call, ✅ after)
+- Per-provider `context_window` metadata in `ProviderMeta` (64K–128K tokens)
+- Token limit warning when estimated tokens exceed 80% of provider context window
+
+### Changed
+
+- `ensure_gitignored()` now returns `Result` instead of silently logging warnings
+- `ensure_gitignore()` now writes `.gitignore` at the git repository root (via `find_git_root()`) instead of the current working directory, preventing incorrect `.gitignore` creation when invoked from subdirectories
+- `CacheConfig` includes `auto_gitignore` field (default: `true`)
+- **BREAKING:** `ReviewMetrics::estimated_cost_cents` changed from `u64` to `f64` to avoid integer truncation for small diffs. Consumers parsing `rs-guard-metrics.json` must update their type expectations
+
+## [0.7.1] - 2026-06-08
 
 ### Added
 

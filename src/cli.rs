@@ -119,4 +119,16 @@ mod tests {
         assert!(parse_temperature("not-a-number").is_err());
         assert!(parse_temperature("").is_err());
     }
+
+    #[test]
+    fn test_dry_run_flag_parsing() {
+        let args = Args::parse_from(["rs-guard", "--dry-run"]);
+        assert!(args.dry_run);
+    }
+
+    #[test]
+    fn test_dry_run_flag_default_false() {
+        let args = Args::parse_from(["rs-guard"]);
+        assert!(!args.dry_run);
+    }
 }

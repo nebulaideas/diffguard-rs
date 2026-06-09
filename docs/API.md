@@ -78,6 +78,13 @@ pub struct Config {
     pub github_base_url: String,
     pub provider_config: ProviderConfig,
     pub no_cache: bool,
+    pub dry_run: bool,
+    pub cache_dir: Option<String>,
+    pub circuit_breaker: Option<CircuitBreaker>,
+    pub pricing: Option<HashMap<String, PricingTomlConfig>>,
+    pub auto_gitignore: bool,
+    pub chunk_head_lines: usize,
+    pub chunk_tail_lines: usize,
 }
 ```
 
@@ -180,7 +187,7 @@ pub struct ProviderConfig {
 | `fetch_pr_diff(base_url, owner, repo, pr, token)` | Fetches PR diff via GitHub API             |
 | `fetch_local_diff()`                              | Runs `git diff --cached`                   |
 | `fetch_file_diff(path)`                           | Reads diff from a file                     |
-| `chunk_diff(content: &str)`                       | Truncates large diffs to 50 head + 50 tail |
+| `chunk_diff(content: &str)`                       | Truncates large diffs to 400 head + 400 tail |
 | `DiffResult`                                      | Struct holding diff content and metadata   |
 
 ### `github`
@@ -210,7 +217,7 @@ pub struct ProviderConfig {
 | `DiffCache::get()`                | Check cache by key hash                   |
 | `DiffCache::set()`                | Store response atomically                 |
 | `DiffCache::enforce_size_limit()` | LRU cleanup if exceeded max size          |
-| `DiffCache::ensure_gitignored()`  | Adds `.rs-guard/cache/` to `.gitignore`   |
+| `DiffCache::ensure_gitignored()`  | Adds `.rs-guard/cache/` to `.gitignore` (returns `Result`, controlled by `auto_gitignore`) |
 
 ### `retry`
 
@@ -253,8 +260,9 @@ pub struct ProviderConfig {
 | `ChatResponse`                      | Parsed response with `choices` vector                              |
 | `factory::create_provider()`        | Factory: `provider_name + api_key -> Provider`                     |
 | `providers::all_providers()`        | Metadata for all known providers                                   |
-| `providers::find_provider()`        | Lookup provider metadata by name                                   |
-| `providers::known_provider_names()` | List of all supported provider names                               |
+| `providers::find_provider()`               | Lookup provider metadata by name                                   |
+| `providers::get_provider_context_window()` | Returns context window size for a provider                         |
+| `providers::known_provider_names()`        | List of all supported provider names                               |
 
 ### `redact`
 
@@ -431,6 +439,7 @@ ProviderMeta {
     default_model: "default-model",
     api_key_env: "NEWPROVIDER_API_KEY",
     ci_allowed_hosts: &[("https", "api.newprovider.com")],
+    context_window: 128_000,
 }
 ```
 

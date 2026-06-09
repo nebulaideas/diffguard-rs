@@ -17,6 +17,8 @@ pub struct ProviderMeta {
     pub api_key_env: &'static str,
     /// (scheme, host) pairs allowed in CI mode for SSRF prevention.
     pub ci_allowed_hosts: &'static [(&'static str, &'static str)],
+    /// Context window size in tokens.
+    pub context_window: usize,
 }
 
 /// Returns the metadata for all known providers, in registration order.
@@ -28,6 +30,7 @@ pub fn all_providers() -> &'static [ProviderMeta] {
             default_model: "deepseek-v4-flash",
             api_key_env: "DEEPSEEK_API_KEY",
             ci_allowed_hosts: &[("https", "api.deepseek.com")],
+            context_window: 64_000,
         },
         ProviderMeta {
             name: "kimi",
@@ -35,6 +38,7 @@ pub fn all_providers() -> &'static [ProviderMeta] {
             default_model: "kimi-k2.5",
             api_key_env: "KIMI_API_KEY",
             ci_allowed_hosts: &[("https", "api.moonshot.ai")],
+            context_window: 128_000,
         },
         ProviderMeta {
             name: "qwen",
@@ -45,6 +49,7 @@ pub fn all_providers() -> &'static [ProviderMeta] {
                 ("https", "dashscope-intl.aliyuncs.com"),
                 ("https", "dashscope.aliyuncs.com"),
             ],
+            context_window: 128_000,
         },
         ProviderMeta {
             name: "openrouter",
@@ -52,6 +57,7 @@ pub fn all_providers() -> &'static [ProviderMeta] {
             default_model: "openai/gpt-4o-mini",
             api_key_env: "OPENROUTER_API_KEY",
             ci_allowed_hosts: &[("https", "openrouter.ai")],
+            context_window: 128_000,
         },
         ProviderMeta {
             name: "openai",
@@ -59,6 +65,7 @@ pub fn all_providers() -> &'static [ProviderMeta] {
             default_model: "gpt-4o-mini",
             api_key_env: "OPENAI_API_KEY",
             ci_allowed_hosts: &[("https", "api.openai.com")],
+            context_window: 128_000,
         },
     ]
 }
@@ -70,6 +77,13 @@ pub fn all_providers() -> &'static [ProviderMeta] {
 /// Returns `None` if the provider name is not recognized.
 pub fn find_provider(name: &str) -> Option<&'static ProviderMeta> {
     all_providers().iter().find(|p| p.name == name)
+}
+
+/// Returns the context window size for a given provider.
+///
+/// Returns `None` if the provider is not recognized.
+pub fn get_provider_context_window(name: &str) -> Option<usize> {
+    find_provider(name).map(|p| p.context_window)
 }
 
 /// Returns a formatted string of all known provider names.
@@ -136,6 +150,25 @@ mod tests {
     #[test]
     fn test_known_provider_names_count() {
         assert_eq!(known_provider_names().len(), 5);
+    }
+
+    #[test]
+    fn test_all_providers_have_context_window() {
+        for p in all_providers() {
+            assert!(p.context_window > 0, "{} missing context_window", p.name);
+        }
+    }
+
+    #[test]
+    fn test_get_provider_context_window_known() {
+        assert_eq!(get_provider_context_window("deepseek"), Some(64_000));
+        assert_eq!(get_provider_context_window("kimi"), Some(128_000));
+        assert_eq!(get_provider_context_window("openai"), Some(128_000));
+    }
+
+    #[test]
+    fn test_get_provider_context_window_unknown() {
+        assert_eq!(get_provider_context_window("nonexistent"), None);
     }
 
     #[test]

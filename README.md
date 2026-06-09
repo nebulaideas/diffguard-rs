@@ -132,6 +132,7 @@ Options:
       --max-tokens <N>        Maximum tokens for LLM completions
       --diff-file <PATH>      Review a pre-existing diff file instead of fetching from GitHub
       --no-cache              Bypass response cache, force a fresh LLM API call
+      --dry-run               Run the full pipeline without submitting reviews or blocking commits
   -h, --help                  Print help
   -V, --version               Print version
 ```
@@ -212,7 +213,7 @@ flowchart LR
     C -->|CI| D[Fetch PR Diff\nGitHub API]
     C -->|Local| E[Fetch Staged Diff\ngit diff --cached]
     C -->|File| F[Read Diff File]
-    D & E & F --> G[Chunk Diff\n50 head + 50 tail]
+    D & E & F --> G[Chunk Diff\n400 head + 400 tail]
     G --> H{Cache Hit?}
     H -->|Yes| J
     H -->|No| I[Call LLM\nwith retry]
@@ -243,7 +244,7 @@ All LLM processing is in-memory. No intermediate comments are posted during anal
 # Build
 cargo build
 
-# Full test suite (~235 tests)
+# Full test suite (~260 tests)
 cargo test
 
 # Lint (zero warnings policy)

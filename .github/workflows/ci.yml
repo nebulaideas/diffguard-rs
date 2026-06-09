@@ -91,6 +91,17 @@ jobs:
       - run: cargo install cargo-audit --locked
       - run: cargo audit
 
+  # Validate all GitHub Actions workflow files (including the examples
+  # under examples/github-actions-workflow/) for syntax errors, invalid
+  # expressions, and unsupported features — e.g. brace expansion in path
+  # filters, which minimatch does not implement.
+  actionlint:
+    name: Workflow Lint (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: rhysd/actionlint@03d0035246f3e81f36aed592ffb4bebf33a03106 # v1.7.7
+
   bench:
     name: Benchmarks
     runs-on: ubuntu-latest

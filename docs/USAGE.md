@@ -33,9 +33,10 @@ rs-guard [OPTIONS]
 | `--temperature` | `-t`  | `0.1`                      | Sampling temperature (0.0 to 2.0). Lower values produce more deterministic output. |
 | `--provider`    |       | `deepseek`                 | LLM provider: `deepseek`, `kimi`, `qwen`, `openrouter`, `openai`.                  |
 | `--config`      | `-c`  | `.reviewer.toml`           | Path to the configuration TOML file.                                               |
-| `--max-tokens`  |       | _(none)_                   | Maximum tokens for LLM completions.                                                |
+| `--max-tokens`  |       | `4096`                     | Maximum tokens for LLM completions.                                                |
 | `--diff-file`   | —     | _(none)_                   | Review a pre-existing diff file instead of fetching from GitHub API.               |
 | `--no-cache`    | —     | Off                        | Bypass the response cache and force a fresh LLM API call.                          |
+| `--dry-run`     | —     | Off                        | Run the full pipeline without submitting reviews or blocking commits.              |
 | `--help`        | `-h`  |                            | Display usage information and exit.                                                |
 | `--version`     | `-V`  |                            | Display version and exit.                                                          |
 
@@ -61,6 +62,9 @@ rs-guard --diff-file pr-diff.diff
 
 # Bypass cache and use custom prompt
 rs-guard --no-cache --prompt-file .github/review-prompt.md
+
+# Test configuration without submitting or blocking
+rs-guard --dry-run
 ```
 
 ---
@@ -222,10 +226,16 @@ Create `.git/hooks/pre-commit`:
 
 ```bash
 #!/bin/sh
-set -e
-git diff --cached --quiet || ./rs-guard
 
-if [ $? -eq 2 ]; then
+# Skip if nothing is staged
+if git diff --cached --quiet; then
+  exit 0
+fi
+
+./rs-guard
+EXIT_CODE=$?
+
+if [ "$EXIT_CODE" -eq 2 ]; then
   echo "Commit blocked: rs-guard requested changes."
   echo "Skip this check with:"
   echo "  git commit --no-verify"
@@ -729,7 +739,7 @@ The diff exceeds 100 KB / 1500 lines. In CI: an explanatory `COMMENT` is posted.
 
 ### `Diff chunked: omitted {} middle lines`
 
-The diff was truncated (50 head + 50 tail preserved). Expected for large PRs.
+The diff was truncated (400 head + 400 tail preserved). Expected for large PRs.
 
 ### `Cache hit — using cached LLM response`
 

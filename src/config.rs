@@ -66,6 +66,26 @@ pub struct ProviderTomlConfig {
     pub http_referer: Option<String>,
 }
 
+/// Circuit breaker configuration in the TOML file.
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct CircuitBreakerTomlConfig {
+    /// Whether the circuit breaker is enabled.
+    pub enabled: bool,
+    /// Consecutive failures before opening the circuit.
+    pub threshold: Option<u32>,
+    /// Cooldown period in seconds before auto-reset.
+    pub cooldown_secs: Option<u64>,
+}
+
+/// Per-provider pricing configuration in the TOML file.
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct PricingTomlConfig {
+    /// Input price in cents per million tokens.
+    pub input_per_million: u64,
+    /// Output price in cents per million tokens.
+    pub output_per_million: u64,
+}
+
 /// Top-level TOML configuration structure.
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct TomlConfig {
@@ -89,6 +109,12 @@ pub struct TomlConfig {
     pub providers: Option<HashMap<String, ProviderTomlConfig>>,
     /// Custom cache directory path (default: git-root/.rs-guard/cache or cwd/.rs-guard/cache).
     pub cache_dir: Option<String>,
+    /// Circuit breaker configuration.
+    pub circuit_breaker: Option<CircuitBreakerTomlConfig>,
+    /// Per-provider pricing overrides.
+    pub pricing: Option<HashMap<String, PricingTomlConfig>>,
+    /// Whether to automatically add the cache directory to `.gitignore`.
+    pub auto_gitignore: Option<bool>,
 }
 
 /// Parses a `.reviewer.toml` configuration file.
@@ -297,6 +323,12 @@ pub struct Config {
     pub dry_run: bool,
     /// Custom cache directory path.
     pub cache_dir: Option<String>,
+    /// Optional circuit breaker configuration.
+    pub circuit_breaker: Option<crate::retry::CircuitBreaker>,
+    /// Optional per-provider pricing overrides.
+    pub pricing: Option<HashMap<String, PricingTomlConfig>>,
+    /// Whether to automatically add the cache directory to `.gitignore`.
+    pub auto_gitignore: bool,
     /// Lines to preserve from the start of the diff when chunking.
     pub chunk_head_lines: usize,
     /// Lines to preserve from the end of the diff when chunking.
@@ -334,6 +366,9 @@ impl Config {
             no_cache: false,
             dry_run: false,
             cache_dir: None,
+            circuit_breaker: None,
+            pricing: None,
+            auto_gitignore: true,
             chunk_head_lines: crate::diff::DEFAULT_CHUNK_HEAD_LINES,
             chunk_tail_lines: crate::diff::DEFAULT_CHUNK_TAIL_LINES,
         }
@@ -472,6 +507,23 @@ impl Config {
 
         let cache_dir = toml.as_ref().and_then(|t| t.cache_dir.clone());
 
+        let circuit_breaker = toml
+            .as_ref()
+            .and_then(|t| t.circuit_breaker.as_ref())
+            .and_then(|cb| {
+                if cb.enabled {
+                    Some(crate::retry::CircuitBreaker::new(
+                        cb.threshold.unwrap_or(3),
+                        cb.cooldown_secs.unwrap_or(60),
+                    ))
+                } else {
+                    None
+                }
+            });
+
+        let pricing = toml.as_ref().and_then(|t| t.pricing.clone());
+        let auto_gitignore = toml.as_ref().and_then(|t| t.auto_gitignore).unwrap_or(true);
+
         Ok(Config {
             provider,
             model,
@@ -490,6 +542,9 @@ impl Config {
             no_cache: false,
             dry_run: false,
             cache_dir,
+            circuit_breaker,
+            pricing,
+            auto_gitignore,
             chunk_head_lines,
             chunk_tail_lines,
         })
@@ -917,5 +972,84 @@ mod tests {
         // On Unix, unreadable files should error; on other platforms, may succeed
         #[cfg(unix)]
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_empty_has_dry_run_false() {
+        let config = Config::empty();
+        assert!(!config.dry_run);
+    }
+
+    #[test]
+    fn test_config_empty_has_cache_dir_none() {
+        let config = Config::empty();
+        assert!(config.cache_dir.is_none());
+    }
+
+    #[test]
+    fn test_apply_args_sets_dry_run() {
+        use clap::Parser;
+        let mut config = Config::empty();
+        assert!(!config.dry_run);
+
+        let args = crate::cli::Args::parse_from(["rs-guard", "--dry-run"]);
+        config.apply_args(&args).unwrap();
+        assert!(config.dry_run);
+    }
+
+    #[test]
+    fn test_circuit_breaker_disabled_produces_none() {
+        let toml = TomlConfig {
+            circuit_breaker: Some(CircuitBreakerTomlConfig {
+                enabled: false,
+                threshold: Some(5),
+                cooldown_secs: Some(120),
+            }),
+            ..Default::default()
+        };
+
+        let circuit_breaker = toml.circuit_breaker.as_ref().and_then(|cb| {
+            if cb.enabled {
+                Some(crate::retry::CircuitBreaker::new(
+                    cb.threshold.unwrap_or(3),
+                    cb.cooldown_secs.unwrap_or(60),
+                ))
+            } else {
+                None
+            }
+        });
+
+        assert!(
+            circuit_breaker.is_none(),
+            "circuit_breaker should be None when enabled=false"
+        );
+    }
+
+    #[test]
+    fn test_circuit_breaker_enabled_produces_some() {
+        let toml = TomlConfig {
+            circuit_breaker: Some(CircuitBreakerTomlConfig {
+                enabled: true,
+                threshold: Some(5),
+                cooldown_secs: Some(120),
+            }),
+            ..Default::default()
+        };
+
+        let circuit_breaker = toml.circuit_breaker.as_ref().and_then(|cb| {
+            if cb.enabled {
+                Some(crate::retry::CircuitBreaker::new(
+                    cb.threshold.unwrap_or(3),
+                    cb.cooldown_secs.unwrap_or(60),
+                ))
+            } else {
+                None
+            }
+        });
+
+        assert!(
+            circuit_breaker.is_some(),
+            "circuit_breaker should be Some when enabled=true"
+        );
     }
 }

@@ -675,6 +675,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_fetch_local_diff_requires_git_repo() {
         // Calling fetch_local_diff outside a git repo returns an error
         let dir = tempfile::tempdir().unwrap();
