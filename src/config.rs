@@ -306,7 +306,7 @@ pub struct Config {
 impl Config {
     /// Creates a minimal config for integration tests.
     ///
-    /// This constructor is marked `#[doc(hidden)]` and should only be used
+    /// This constructor is marked `#[doc(hidden)]` and only intended for use
     /// in test code. It provides minimal defaults that satisfy the type's
     /// invariants but are not meaningful for production use.
     ///
