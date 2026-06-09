@@ -41,6 +41,34 @@ const CACHE_FILE_EXT: &str = "cache";
 
 static CACHE_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Attempts to find the git repository root by running `git rev-parse --show-toplevel`.
+///
+/// Returns `None` if git is not available or we're not inside a git repository.
+fn find_git_root() -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout);
+        Some(PathBuf::from(path.trim()))
+    } else {
+        None
+    }
+}
+
+/// Returns the default cache directory.
+///
+/// Uses the git repository root if available, otherwise falls back to the
+/// current working directory. This ensures cache consistency when rs-guard
+/// is invoked from subdirectories (e.g., in a monorepo).
+fn default_cache_dir() -> PathBuf {
+    find_git_root()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .join(DEFAULT_CACHE_DIR)
+}
+
 /// Cache configuration.
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
@@ -57,7 +85,7 @@ pub struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            cache_dir: PathBuf::from(DEFAULT_CACHE_DIR),
+            cache_dir: default_cache_dir(),
             ttl: Duration::from_secs(DEFAULT_TTL_SECS),
             enabled: true,
             max_size_bytes: DEFAULT_MAX_SIZE_BYTES,

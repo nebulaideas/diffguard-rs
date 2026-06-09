@@ -14,6 +14,13 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Default maximum tokens for LLM responses.
+///
+/// Ensures the verdict metadata block is never truncated. 4096 tokens is
+/// sufficient for a thorough structured review while fitting within the
+/// output limits of every supported provider.
+pub const DEFAULT_MAX_TOKENS: u32 = 4096;
+
 /// Default system prompt embedded in the binary.
 ///
 /// Used when no `--prompt-file` is specified or the file does not exist.
@@ -232,6 +239,25 @@ fn resolve_api_key_env_var(
     standard_api_key_env_var(provider).map(|s| s.to_string())
 }
 
+/// Validated CI configuration with all required fields present.
+///
+/// Created by [`Config::validate_for_ci()`] when running in CI mode.
+/// This struct guarantees that all CI-required fields are present,
+/// eliminating the need for `.expect()` calls in the pipeline.
+#[derive(Debug, Clone)]
+pub struct CiConfig {
+    /// GitHub authentication token.
+    pub github_token: String,
+    /// Pull request number.
+    pub pr_number: u64,
+    /// Repository owner (e.g., "nebulaideas").
+    pub repo_owner: String,
+    /// Repository name (e.g., "rs-guard").
+    pub repo_name: String,
+    /// GitHub API base URL.
+    pub github_base_url: String,
+}
+
 /// Resolved application configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -403,11 +429,17 @@ impl Config {
             )));
         }
 
-        // Max tokens: env > toml > none (single source of truth in provider_config)
-        let max_tokens = std::env::var("RS_GUARD_MAX_TOKENS")
+        // Max tokens: env > toml > DEFAULT_MAX_TOKENS (4096)
+        //
+        // Never allow None here — a None max_tokens lets the provider truncate
+        // the response before the [RS_GUARD_VERDICT_METADATA] block, which causes
+        // the fallback tag-counting path to activate and may produce incorrect
+        // APPROVE verdicts on clean diffs.
+        let max_tokens: Option<u32> = std::env::var("RS_GUARD_MAX_TOKENS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .or(toml.as_ref().and_then(|t| t.max_tokens));
+            .or(toml.as_ref().and_then(|t| t.max_tokens))
+            .or(Some(DEFAULT_MAX_TOKENS));
 
         // Chunking thresholds: toml > default
         let chunk_head_lines = toml
@@ -573,41 +605,39 @@ impl Config {
     pub fn validate_for_ci(&self) -> Result<CiConfig, RsGuardError> {
         validate_github_base_url(&self.github_base_url)?;
 
-        if self.is_ci {
-            let github_token = self.github_token.clone().ok_or_else(|| {
-                RsGuardError::Config("GITHUB_TOKEN is required in CI mode".to_string())
-            })?;
-            
-            let pr_number = self.pr_number.ok_or_else(|| {
-                RsGuardError::Config("PR_NUMBER is required in CI mode".to_string())
-            })?;
-            
-            let repo_owner = self.repo_owner.clone().ok_or_else(|| {
-                RsGuardError::Config("REPO_FULL_NAME is required in CI mode (format: owner/repo)".to_string())
-            })?;
-            
-            let repo_name = self.repo_name.clone().ok_or_else(|| {
-                RsGuardError::Config("REPO_FULL_NAME is required in CI mode (format: owner/repo)".to_string())
-            })?;
-            
-            Ok(CiConfig {
-                github_token,
-                pr_number,
-                repo_owner,
-                repo_name,
-                github_base_url: self.github_base_url.clone(),
-            })
-        } else {
-            // In local mode, return a CiConfig with empty values
-            // This shouldn't be used, but maintains the API contract
-            Ok(CiConfig {
-                github_token: String::new(),
-                pr_number: 0,
-                repo_owner: String::new(),
-                repo_name: String::new(),
-                github_base_url: self.github_base_url.clone(),
-            })
+        if !self.is_ci {
+            return Err(RsGuardError::Config(
+                "validate_for_ci() called but not in CI mode".to_string(),
+            ));
         }
+
+        let github_token = self.github_token.clone().ok_or_else(|| {
+            RsGuardError::Config("GITHUB_TOKEN is required in CI mode".to_string())
+        })?;
+
+        let pr_number = self
+            .pr_number
+            .ok_or_else(|| RsGuardError::Config("PR_NUMBER is required in CI mode".to_string()))?;
+
+        let repo_owner = self.repo_owner.clone().ok_or_else(|| {
+            RsGuardError::Config(
+                "REPO_FULL_NAME is required in CI mode (format: owner/repo)".to_string(),
+            )
+        })?;
+
+        let repo_name = self.repo_name.clone().ok_or_else(|| {
+            RsGuardError::Config(
+                "REPO_FULL_NAME is required in CI mode (format: owner/repo)".to_string(),
+            )
+        })?;
+
+        Ok(CiConfig {
+            github_token,
+            pr_number,
+            repo_owner,
+            repo_name,
+            github_base_url: self.github_base_url.clone(),
+        })
     }
 }
 
@@ -726,7 +756,9 @@ mod tests {
         let mut config = Config::empty();
         config.is_ci = false;
         config.github_base_url = "https://api.github.com".to_string();
-        assert!(config.validate_for_ci().is_ok());
+        // In local mode, validate_for_ci() should return an error
+        // because CI-specific fields are not available
+        assert!(config.validate_for_ci().is_err());
     }
 
     #[test]
@@ -808,6 +840,35 @@ mod tests {
         config.repo_name = Some("repo".to_string());
         let result = config.validate_for_ci();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_for_ci_returns_ci_config() {
+        let mut config = Config::empty();
+        config.is_ci = true;
+        config.github_token = Some("test-token".to_string());
+        config.pr_number = Some(42);
+        config.repo_owner = Some("owner".to_string());
+        config.repo_name = Some("repo".to_string());
+        config.github_base_url = "https://api.github.com".to_string();
+
+        let ci_config = config.validate_for_ci().expect("should validate");
+        assert_eq!(ci_config.github_token, "test-token");
+        assert_eq!(ci_config.pr_number, 42);
+        assert_eq!(ci_config.repo_owner, "owner");
+        assert_eq!(ci_config.repo_name, "repo");
+        assert_eq!(ci_config.github_base_url, "https://api.github.com");
+    }
+
+    #[test]
+    fn test_validate_for_ci_not_in_ci_mode_returns_error() {
+        let mut config = Config::empty();
+        config.is_ci = false;
+        config.github_base_url = "https://api.github.com".to_string();
+
+        let result = config.validate_for_ci();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not in CI mode"));
     }
 
     #[test]

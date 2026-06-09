@@ -15,6 +15,7 @@ const ALL_TEST_ENV_VARS: &[&str] = &[
     "RS_GUARD_PROVIDER",
     "RS_GUARD_MODEL",
     "RS_GUARD_TEMPERATURE",
+    "RS_GUARD_MAX_TOKENS",
     "DEEPSEEK_API_KEY",
     "KIMI_API_KEY",
     "MY_KIMI_KEY",
@@ -830,5 +831,54 @@ fn test_default_chunk_thresholds_when_not_set() {
             config.chunk_tail_lines,
             rs_guard::diff::DEFAULT_CHUNK_TAIL_LINES
         );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Issue #30 — max_tokens safe default (DEFAULT_MAX_TOKENS = 4096)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn test_default_max_tokens_applied_when_not_set() {
+    // When RS_GUARD_MAX_TOKENS is unset and TOML has no max_tokens,
+    // Config must use DEFAULT_MAX_TOKENS (4096) to prevent truncated verdicts.
+    with_env(&[("DEEPSEEK_API_KEY", "test-deepseek-key")], || {
+        let config = Config::from_env(None).unwrap();
+        assert_eq!(
+            config.provider_config.max_tokens,
+            Some(rs_guard::config::DEFAULT_MAX_TOKENS),
+            "max_tokens should default to DEFAULT_MAX_TOKENS when not configured"
+        );
+    });
+}
+
+#[test]
+#[serial]
+fn test_env_max_tokens_overrides_default() {
+    with_env(
+        &[
+            ("DEEPSEEK_API_KEY", "test-deepseek-key"),
+            ("RS_GUARD_MAX_TOKENS", "8192"),
+        ],
+        || {
+            let config = Config::from_env(None).unwrap();
+            assert_eq!(config.provider_config.max_tokens, Some(8192));
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn test_toml_max_tokens_overrides_default() {
+    let file = write_toml(
+        br#"provider = "deepseek"
+max_tokens = 2048
+"#,
+    );
+    with_env(&[("DEEPSEEK_API_KEY", "test-deepseek-key")], || {
+        let toml = load_toml_config(file.path()).unwrap();
+        let config = Config::from_env(toml).unwrap();
+        assert_eq!(config.provider_config.max_tokens, Some(2048));
     });
 }

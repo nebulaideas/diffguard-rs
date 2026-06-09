@@ -68,7 +68,7 @@ base_url = "https://api.openai.com/v1"
 | `provider`          | string  | `"deepseek"` | LLM provider to use.                                                                                                              |
 | `model`             | string  | provider-specific | Model identifier. See [PROVIDERS.md](PROVIDERS.md) for defaults.                                                            |
 | `temperature`       | float   | `0.1`        | Sampling temperature (0.0 = deterministic, 2.0 = very random).                                                                    |
-| `max_tokens`        | integer | none         | Maximum tokens in the LLM response.                                                                                               |
+| `max_tokens`        | integer | `4096`       | Maximum tokens in the LLM response. Defaults to 4096 to prevent the verdict block from being truncated by the provider.           |
 | `chunk_head_lines`  | integer | `400`        | Lines preserved from the **start** of the diff when chunking. Increase for providers with large context windows (e.g. 128K).      |
 | `chunk_tail_lines`  | integer | `400`        | Lines preserved from the **end** of the diff when chunking. Combined default of 800 covers most PRs without truncation.           |
 
