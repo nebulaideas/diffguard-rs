@@ -70,8 +70,18 @@ pub struct TomlConfig {
     pub temperature: Option<f32>,
     /// Maximum tokens for LLM completions.
     pub max_tokens: Option<u32>,
+    /// Lines to preserve from the start of the diff when chunking.
+    ///
+    /// Overrides [`crate::diff::DEFAULT_CHUNK_HEAD_LINES`].
+    pub chunk_head_lines: Option<usize>,
+    /// Lines to preserve from the end of the diff when chunking.
+    ///
+    /// Overrides [`crate::diff::DEFAULT_CHUNK_TAIL_LINES`].
+    pub chunk_tail_lines: Option<usize>,
     /// Per-provider configuration sections.
     pub providers: Option<HashMap<String, ProviderTomlConfig>>,
+    /// Custom cache directory path (default: git-root/.rs-guard/cache or cwd/.rs-guard/cache).
+    pub cache_dir: Option<String>,
 }
 
 /// Parses a `.reviewer.toml` configuration file.
@@ -257,6 +267,14 @@ pub struct Config {
     model_set_via_cli: bool,
     /// Bypass the response cache, forcing an LLM API call.
     pub no_cache: bool,
+    /// Dry-run mode: run pipeline without submitting or blocking.
+    pub dry_run: bool,
+    /// Custom cache directory path.
+    pub cache_dir: Option<String>,
+    /// Lines to preserve from the start of the diff when chunking.
+    pub chunk_head_lines: usize,
+    /// Lines to preserve from the end of the diff when chunking.
+    pub chunk_tail_lines: usize,
 }
 
 impl Config {
@@ -288,6 +306,10 @@ impl Config {
             toml_providers: HashMap::new(),
             model_set_via_cli: false,
             no_cache: false,
+            dry_run: false,
+            cache_dir: None,
+            chunk_head_lines: crate::diff::DEFAULT_CHUNK_HEAD_LINES,
+            chunk_tail_lines: crate::diff::DEFAULT_CHUNK_TAIL_LINES,
         }
     }
 
@@ -387,6 +409,16 @@ impl Config {
             .and_then(|s| s.parse().ok())
             .or(toml.as_ref().and_then(|t| t.max_tokens));
 
+        // Chunking thresholds: toml > default
+        let chunk_head_lines = toml
+            .as_ref()
+            .and_then(|t| t.chunk_head_lines)
+            .unwrap_or(crate::diff::DEFAULT_CHUNK_HEAD_LINES);
+        let chunk_tail_lines = toml
+            .as_ref()
+            .and_then(|t| t.chunk_tail_lines)
+            .unwrap_or(crate::diff::DEFAULT_CHUNK_TAIL_LINES);
+
         // Provider config from TOML — validate base_url against SSRF allowlist in CI
         // In local mode, warn about potentially dangerous URLs to prevent accidental token exfiltration
         let toml_provider = toml_providers.get(&provider);
@@ -406,6 +438,8 @@ impl Config {
             model: model.clone(),
         };
 
+        let cache_dir = toml.as_ref().and_then(|t| t.cache_dir.clone());
+
         Ok(Config {
             provider,
             model,
@@ -422,6 +456,10 @@ impl Config {
             toml_providers,
             model_set_via_cli: false,
             no_cache: false,
+            dry_run: false,
+            cache_dir,
+            chunk_head_lines,
+            chunk_tail_lines,
         })
     }
 
@@ -500,6 +538,9 @@ impl Config {
         if args.no_cache {
             self.no_cache = true;
         }
+        if args.dry_run {
+            self.dry_run = true;
+        }
 
         Ok(())
     }
@@ -529,27 +570,44 @@ impl Config {
     /// # Errors
     ///
     /// Returns [`RsGuardError::Config`] if validation fails.
-    pub fn validate_for_ci(&self) -> Result<(), RsGuardError> {
+    pub fn validate_for_ci(&self) -> Result<CiConfig, RsGuardError> {
         validate_github_base_url(&self.github_base_url)?;
 
         if self.is_ci {
-            if self.github_token.is_none() {
-                return Err(RsGuardError::Config(
-                    "GITHUB_TOKEN is required in CI mode".to_string(),
-                ));
-            }
-            if self.pr_number.is_none() {
-                return Err(RsGuardError::Config(
-                    "PR_NUMBER is required in CI mode".to_string(),
-                ));
-            }
-            if self.repo_owner.is_none() || self.repo_name.is_none() {
-                return Err(RsGuardError::Config(
-                    "REPO_FULL_NAME is required in CI mode (format: owner/repo)".to_string(),
-                ));
-            }
+            let github_token = self.github_token.clone().ok_or_else(|| {
+                RsGuardError::Config("GITHUB_TOKEN is required in CI mode".to_string())
+            })?;
+            
+            let pr_number = self.pr_number.ok_or_else(|| {
+                RsGuardError::Config("PR_NUMBER is required in CI mode".to_string())
+            })?;
+            
+            let repo_owner = self.repo_owner.clone().ok_or_else(|| {
+                RsGuardError::Config("REPO_FULL_NAME is required in CI mode (format: owner/repo)".to_string())
+            })?;
+            
+            let repo_name = self.repo_name.clone().ok_or_else(|| {
+                RsGuardError::Config("REPO_FULL_NAME is required in CI mode (format: owner/repo)".to_string())
+            })?;
+            
+            Ok(CiConfig {
+                github_token,
+                pr_number,
+                repo_owner,
+                repo_name,
+                github_base_url: self.github_base_url.clone(),
+            })
+        } else {
+            // In local mode, return a CiConfig with empty values
+            // This shouldn't be used, but maintains the API contract
+            Ok(CiConfig {
+                github_token: String::new(),
+                pr_number: 0,
+                repo_owner: String::new(),
+                repo_name: String::new(),
+                github_base_url: self.github_base_url.clone(),
+            })
         }
-        Ok(())
     }
 }
 
