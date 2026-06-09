@@ -191,18 +191,28 @@ pub async fn run_pipeline(
             .as_ref()
             .map(PathBuf::from)
             .unwrap_or_else(|| CacheConfig::default().cache_dir),
+        auto_gitignore: config.auto_gitignore,
         ..CacheConfig::default()
     };
     let cache = DiffCache::new(cache_config).context("Failed to initialize response cache")?;
 
     // Only auto-add to .gitignore in local mode — CI environments are often read-only
     if !config.is_ci {
-        cache.ensure_gitignored();
+        if let Err(e) = cache.ensure_gitignored() {
+            log::warn!("Failed to update .gitignore: {}", e);
+        }
     }
 
     // --- Metrics collection ---
     let start = std::time::Instant::now();
-    let estimated_tokens_in = (config.prompt.len() + diff_content.len()) / 4; // rough: ~4 chars/token
+    let estimated_tokens_in = estimate_tokens(&config.prompt) + estimate_tokens(&diff_content);
+
+    // Warn if estimated tokens approach provider context window limits
+    if let Some(context_window) =
+        crate::llm::providers::get_provider_context_window(&config.provider)
+    {
+        check_token_warning(estimated_tokens_in, context_window, &config.provider);
+    }
 
     // Check cache before calling the LLM (keyed on actual content sent to LLM)
     let llm_response = if let Some(cached) = cache.get(
@@ -215,7 +225,9 @@ pub async fn run_pipeline(
         log::info!("Cache hit — using cached LLM response");
         cached
     } else {
-        log::info!("Calling {} ({})...", config.provider, config.model);
+        if !config.is_ci {
+            println!("🤖 Calling {} ({})...", config.provider, config.model);
+        }
         let provider = create_provider(&config.provider, &config.api_key, &config.provider_config)
             .context("Failed to create LLM provider")?;
 
@@ -229,6 +241,10 @@ pub async fn run_pipeline(
         )
         .await
         .context("LLM API call failed")?;
+
+        if !config.is_ci {
+            println!("✅ Response received ({} chars)", response.len());
+        }
 
         log::info!("Caching LLM response for future runs");
         if let Err(e) = cache.set(
@@ -245,7 +261,7 @@ pub async fn run_pipeline(
     };
 
     let latency = start.elapsed();
-    let estimated_tokens_out = llm_response.len() / 4; // rough: ~4 chars/token
+    let estimated_tokens_out = estimate_tokens(&llm_response);
     let estimated_cost_cents = estimate_cost_cents(
         &config.provider,
         estimated_tokens_in as u64,
@@ -426,6 +442,38 @@ pub async fn run_pipeline(
     }
 }
 
+/// Estimates token count for a piece of text using a hybrid heuristic.
+///
+/// ASCII characters are estimated at ~4 chars per token.
+/// Non-ASCII characters (Unicode, emoji, CJK, etc.) are estimated at
+/// ~1.5 chars per token, since they typically consume more bytes per token.
+fn estimate_tokens(text: &str) -> usize {
+    let ascii_chars = text.chars().filter(|c| c.is_ascii()).count();
+    let non_ascii_chars = text.chars().filter(|c| !c.is_ascii()).count();
+
+    // ASCII: ~4 chars per token
+    // Non-ASCII: ~1.5 chars per token (rough estimate)
+    let ascii_tokens = ascii_chars / 4;
+    let non_ascii_tokens = (non_ascii_chars as f64 / 1.5) as usize;
+
+    ascii_tokens + non_ascii_tokens
+}
+
+/// Warns when estimated tokens approach the provider's context window limit.
+///
+/// Prints a warning to stderr when `estimated_tokens` exceeds 80% of the
+/// provider's known context window.
+fn check_token_warning(estimated_tokens: usize, context_window: usize, provider: &str) {
+    let threshold = (context_window as f64 * 0.8) as usize;
+    if estimated_tokens > threshold {
+        eprintln!(
+            "⚠️  Warning: Estimated input tokens ({}) approach 80% of {} context window ({} tokens).\n\
+             Consider using a smaller diff or a provider with a larger context window.",
+            estimated_tokens, provider, context_window
+        );
+    }
+}
+
 /// Rough cost estimation based on provider pricing.
 ///
 /// Returns estimated cost in **cents** (USD) as `f64` to avoid integer
@@ -525,5 +573,45 @@ mod tests {
         );
         let cost = estimate_cost_cents("deepseek", 1_000_000, 1_000_000, Some(&pricing));
         assert!((cost - 60.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_estimate_tokens_ascii() {
+        // 40 ASCII chars ≈ 10 tokens
+        let text = "a".repeat(40);
+        assert_eq!(estimate_tokens(&text), 10);
+    }
+
+    #[test]
+    fn test_estimate_tokens_non_ascii() {
+        // 15 non-ASCII chars ≈ 10 tokens (15 / 1.5 = 10)
+        let text = "中".repeat(15);
+        assert_eq!(estimate_tokens(&text), 10);
+    }
+
+    #[test]
+    fn test_estimate_tokens_mixed() {
+        // 20 ASCII chars (5 tokens) + 15 non-ASCII chars (10 tokens) = 15 tokens
+        let ascii = "a".repeat(20);
+        let non_ascii = "中".repeat(15);
+        let text = format!("{}{}", ascii, non_ascii);
+        assert_eq!(estimate_tokens(&text), 15);
+    }
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn test_check_token_warning_below_threshold() {
+        // Should not panic or print when below 80%
+        check_token_warning(1000, 128_000, "deepseek");
+    }
+
+    #[test]
+    fn test_check_token_warning_above_threshold() {
+        // Should not panic when above 80%
+        check_token_warning(110_000, 128_000, "deepseek");
     }
 }

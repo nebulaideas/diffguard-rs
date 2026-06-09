@@ -23,7 +23,7 @@ flowchart TD
     D -->|"local"| G["Fetch Staged Diff\nfetch_local_diff()\ngit diff --cached"]
 
     E & F & G --> H["Validate Diff\nsize + content markers"]
-    H --> I["Chunk Diff\nchunk_diff()\n50 head + 50 tail lines"]
+    H --> I["Chunk Diff\nchunk_diff()\n400 head + 400 tail lines"]
 
     I --> J["Check Cache\nDiffCache::get()"]
     J -->|"Hit"| M
@@ -166,7 +166,7 @@ Three diff sources with different behavior:
 | File (`--diff-file`)        | `fetch_file_diff()`  | Prints to stderr, exits 0             |
 | Local (`git diff --cached`) | `fetch_local_diff()` | Prints to stderr, exits 0             |
 
-After fetching, `chunk_diff()` trims large diffs to the first 50 + last 50 lines. Returns `Cow<str>` — borrowed when no truncation is needed (zero allocation in the common case).
+After fetching, `chunk_diff()` trims large diffs to the first 400 + last 400 lines (configurable via `chunk_head_lines` / `chunk_tail_lines` in `.reviewer.toml`). Returns `Cow<str>` — borrowed when no truncation is needed (zero allocation in the common case).
 
 ### `verdict.rs` — Verdict Parsing
 

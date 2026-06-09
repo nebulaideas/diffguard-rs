@@ -72,6 +72,7 @@ base_url = "https://api.openai.com/v1"
 | `chunk_head_lines`  | integer | `400`             | Lines preserved from the **start** of the diff when chunking. Increase for providers with large context windows (e.g. 128K).      |
 | `chunk_tail_lines`  | integer | `400`             | Lines preserved from the **end** of the diff when chunking. Combined default of 800 covers most PRs without truncation.           |
 | `cache_dir`         | string  | `.rs-guard/cache` | Custom cache directory path. Defaults to git-root (or CWD) relative `.rs-guard/cache`.                                           |
+| `auto_gitignore`    | boolean | `true`            | Whether to automatically add the cache directory to `.gitignore`.                                                                |
 
 #### Provider Section Fields
 
@@ -130,7 +131,9 @@ output_per_million = 60  # $0.60 per 1M output tokens
 | `--temperature` | `-t`  | `0.1`                      | Sampling temperature (0.0 - 2.0).    |
 | `--provider`    |       | `deepseek`                 | LLM provider to use.                 |
 | `--config`      | `-c`  | `.reviewer.toml`           | Path to configuration TOML file.     |
-| `--max-tokens`  |       | none                       | Maximum tokens for LLM completions.  |
+| `--max-tokens`  |       | `4096`                     | Maximum tokens for LLM completions.  |
+| `--no-cache`    |       | Off                        | Bypass response cache.               |
+| `--dry-run`     |       | Off                        | Run without submitting or blocking.  |
 | `--help`        | `-h`  |                            | Display help.                        |
 | `--version`     | `-V`  |                            | Display version.                     |
 

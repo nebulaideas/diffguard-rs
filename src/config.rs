@@ -113,6 +113,8 @@ pub struct TomlConfig {
     pub circuit_breaker: Option<CircuitBreakerTomlConfig>,
     /// Per-provider pricing overrides.
     pub pricing: Option<HashMap<String, PricingTomlConfig>>,
+    /// Whether to automatically add the cache directory to `.gitignore`.
+    pub auto_gitignore: Option<bool>,
 }
 
 /// Parses a `.reviewer.toml` configuration file.
@@ -325,6 +327,8 @@ pub struct Config {
     pub circuit_breaker: Option<crate::retry::CircuitBreaker>,
     /// Optional per-provider pricing overrides.
     pub pricing: Option<HashMap<String, PricingTomlConfig>>,
+    /// Whether to automatically add the cache directory to `.gitignore`.
+    pub auto_gitignore: bool,
     /// Lines to preserve from the start of the diff when chunking.
     pub chunk_head_lines: usize,
     /// Lines to preserve from the end of the diff when chunking.
@@ -364,6 +368,7 @@ impl Config {
             cache_dir: None,
             circuit_breaker: None,
             pricing: None,
+            auto_gitignore: true,
             chunk_head_lines: crate::diff::DEFAULT_CHUNK_HEAD_LINES,
             chunk_tail_lines: crate::diff::DEFAULT_CHUNK_TAIL_LINES,
         }
@@ -517,6 +522,7 @@ impl Config {
             });
 
         let pricing = toml.as_ref().and_then(|t| t.pricing.clone());
+        let auto_gitignore = toml.as_ref().and_then(|t| t.auto_gitignore).unwrap_or(true);
 
         Ok(Config {
             provider,
@@ -538,6 +544,7 @@ impl Config {
             cache_dir,
             circuit_breaker,
             pricing,
+            auto_gitignore,
             chunk_head_lines,
             chunk_tail_lines,
         })

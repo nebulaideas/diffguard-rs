@@ -35,7 +35,7 @@ rustup component add clippy rustfmt
 # Build
 cargo build
 
-# Run full test suite (~220 tests, all offline with wiremock)
+# Run full test suite (~260 tests, all offline with wiremock)
 cargo test
 
 # Lint — zero warnings required
@@ -442,7 +442,7 @@ flowchart TD
     C & D & E --> F{"Diff too large or empty?"}
     F -->|"DiffTooLarge"| G["Handle: CI posts COMMENT<br/>Local prints warning + exit 0"]
     F -->|"EmptyDiff"| H["Exit 0: nothing to review"]
-    F -->|"OK"| I["chunk_diff()<br/>50 head + 50 tail lines"]
+    F -->|"OK"| I["chunk_diff()<br/>400 head + 400 tail lines"]
     I --> J["DiffCache::get()<br/>SHA-256(diff|prompt|provider|model|temp)"]
     J -->|"Cache hit"| M
     J -->|"Cache miss"| K["create_provider() + chat_completion()"]

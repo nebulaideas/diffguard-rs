@@ -16,7 +16,7 @@ This document covers how to configure each supported LLM provider for rs-guard.
 
 ## DeepSeek
 
-**Phase:** 1 (default provider)
+
 
 ### Quick Start
 
@@ -26,11 +26,12 @@ export DEEPSEEK_API_KEY="your-api-key"
 
 ### Provider Details
 
-| Key           | Value                       |
-| ------------- | --------------------------- |
-| Base URL      | `https://api.deepseek.com`  |
-| Default Model | `deepseek-v4-flash`         |
-| Auth Header   | `Bearer {DEEPSEEK_API_KEY}` |
+| Key            | Value                       |
+| -------------- | --------------------------- |
+| Base URL       | `https://api.deepseek.com`  |
+| Default Model  | `deepseek-v4-flash`         |
+| Context Window | 64,000 tokens               |
+| Auth Header    | `Bearer {DEEPSEEK_API_KEY}` |
 
 ### CLI Usage
 
@@ -59,7 +60,7 @@ base_url = "https://api.deepseek.com"
 
 ## Kimi (Moonshot AI)
 
-**Phase:** 2
+
 
 ### Quick Start
 
@@ -73,6 +74,7 @@ export KIMI_API_KEY="your-api-key"
 | --------------- | --------------------------------- |
 | Base URL        | `https://api.moonshot.ai/v1`      |
 | Default Model   | `kimi-k2.5`                       |
+| Context Window  | 128,000 tokens                    |
 | Auth Header     | `Bearer {KIMI_API_KEY}`           |
 | Special Feature | `reasoning_content` field support |
 
@@ -103,7 +105,7 @@ base_url = "https://api.moonshot.ai/v1"
 
 ## Qwen (Alibaba Cloud)
 
-**Phase:** 2
+
 
 ### Quick Start
 
@@ -117,6 +119,7 @@ export DASHSCOPE_API_KEY="your-api-key"
 | --------------- | -------------------------------------------------------- |
 | Base URL        | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
 | Default Model   | `qwen-plus`                                              |
+| Context Window  | 128,000 tokens                                           |
 | Auth Header     | `Bearer {DASHSCOPE_API_KEY}`                             |
 | Special Feature | Requires `result_format: "message"` in requests          |
 
@@ -147,7 +150,7 @@ base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 ## OpenRouter
 
-**Phase:** 2
+
 
 ### Quick Start
 
@@ -161,6 +164,7 @@ export OPENROUTER_API_KEY="your-api-key"
 | ------------- | ------------------------------ |
 | Base URL      | `https://openrouter.ai/api/v1` |
 | Default Model | `openai/gpt-4o-mini`           |
+| Context Window| 128,000 tokens                 |
 | Auth Header   | `Bearer {OPENROUTER_API_KEY}`  |
 | Extra Headers | `HTTP-Referer`, `X-Title`      |
 
@@ -207,7 +211,7 @@ http_referer = "https://your-site.com"
 
 ## OpenAI
 
-**Phase:** 2
+
 
 ### Quick Start
 
@@ -221,6 +225,7 @@ export OPENAI_API_KEY="your-api-key"
 | ------------- | ------------------------------------------------------ |
 | Base URL      | `https://api.openai.com/v1`                            |
 | Default Model | `gpt-4o-mini`                                          |
+| Context Window| 128,000 tokens                                         |
 | Auth Header   | `Bearer {OPENAI_API_KEY}`                              |
 | Note          | Generic OpenAI-compatible; works with custom endpoints |
 

@@ -7,6 +7,11 @@
 #
 # This hook analyzes staged changes with rs-guard and aborts the commit
 # if the review returns REQUEST_CHANGES.
+#
+# Tips:
+#   - Test the hook without blocking: ./rs-guard --dry-run
+#   - Force a fresh review: ./rs-guard --no-cache
+#   - Bypass the hook: git commit --no-verify
 
 # Set your preferred provider and API key here, or rely on env vars.
 # export RS_GUARD_PROVIDER="deepseek"
@@ -15,6 +20,11 @@
 if ! command -v rs-guard >/dev/null 2>&1; then
     echo "rs-guard: not found in PATH. Skipping AI review."
     echo "Install from: https://github.com/nebulaideas/rs-guard/releases"
+    exit 0
+fi
+
+# Skip if nothing is staged
+if git diff --cached --quiet; then
     exit 0
 fi
 
