@@ -652,8 +652,9 @@ mod tests {
         // Test with very large token counts that could cause overflow
         // The function uses f64, so it should handle large values gracefully
         let cost = estimate_cost_cents("deepseek", u64::MAX, u64::MAX, None);
-        // Should return a finite value (f64 handles large numbers via infinity)
-        assert!(cost.is_finite() || cost.is_infinite());
+        // Should return a finite value (not infinity or NaN)
+        assert!(cost.is_finite());
+        assert!(!cost.is_nan());
     }
 
     #[test]
