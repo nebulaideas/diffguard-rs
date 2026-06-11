@@ -16,7 +16,7 @@
 - 🤖 **Multi-provider LLM** — DeepSeek, Kimi (Moonshot AI), Qwen (Alibaba Cloud), OpenRouter, OpenAI
 - ⚡ **Response caching** — SHA-256 keyed, 24-hour TTL, 100 MB limit; skip with `--no-cache`
 - 🔄 **Automatic retry** — Exponential backoff (1s/2s/4s ±25% jitter) + optional circuit breaker
-- 🔍 **In-memory verdict parsing** — Four-field metadata block (`CriticalIssues`, `SecurityIssues`, `ImportantIssues`, `Suggestions`); no intermediate comment spam
+- 🔍 **In-memory verdict parsing** — Structured metadata block (`Verdict` + four severity counts: `CriticalIssues`, `SecurityIssues`, `ImportantIssues`, `Suggestions`); no intermediate comment spam
 - 📊 **Metrics export** — Per-run JSON artifact with token counts, latency, and cost estimate
 - ⚙️ **CI + local mode** — GitHub Actions submits reviews; git pre-commit hook blocks bad commits
 - 📄 **Configurable prompts** — Per-repository `.github/review-prompt.md` or `.reviewer.toml`

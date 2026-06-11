@@ -36,7 +36,7 @@ jobs:
               https://github.com/nebulaideas/rs-guard/releases/download/v1.0.0/rs-guard-x86_64-unknown-linux-gnu.sha256; then
             sha256sum -c rs-guard-x86_64-unknown-linux-gnu.sha256
           else
-            echo "Warning: SHA-256 file not found, skipping integrity check."
+            echo "::warning::SHA-256 file not found, skipping integrity check."
           fi
           chmod +x rs-guard-x86_64-unknown-linux-gnu
           mv rs-guard-x86_64-unknown-linux-gnu rs-guard

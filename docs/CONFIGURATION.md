@@ -130,13 +130,12 @@ LLM response:
 | Condition | GitHub event |
 | --------- | ------------ |
 | `NEGATIVE` verdict, or any `[Critical]` / `[Security]` finding | `REQUEST_CHANGES` |
-| `important_issues >= 3` (configurable via `IMPORTANT_ISSUES_THRESHOLD`) | `REQUEST_CHANGES` |
+| `important_issues >= 3` (compile-time constant `IMPORTANT_ISSUES_THRESHOLD = 3` in `src/verdict.rs`; not configurable via TOML/env) | `REQUEST_CHANGES` |
 | `important_issues` is 1 or 2 | `COMMENT` |
 | No issues | `APPROVE` |
 
-The threshold of **3 important issues** is a compile-time constant (`IMPORTANT_ISSUES_THRESHOLD = 3`)
-in `src/verdict.rs`. It is not currently configurable via TOML or env var; adjust it by
-recompiling from source if your team needs a different value.
+To use a different threshold, change `IMPORTANT_ISSUES_THRESHOLD` in `src/verdict.rs` and
+recompile from source.
 
 ---
 
