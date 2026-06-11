@@ -77,7 +77,7 @@ chmod +x rs-guard
 sudo mv rs-guard /usr/local/bin/
 ```
 
-#### macOS (Apple Silicon M1/M2/M3)
+#### macOS (Apple Silicon M1/M2/M3/M4/M5)
 
 ```bash
 curl -L -o rs-guard \
@@ -205,7 +205,7 @@ sudo mv ~/Downloads/rs-guard /usr/local/bin/
 
 #### Apple Silicon Performance
 
-Native ARM64 binaries run 20-30% faster on M1/M2/M3 chips compared to Rosetta translation.
+Native ARM64 binaries run 20-30% faster on M1/M2/M3/M4/M5 chips compared to Rosetta translation.
 
 ### Windows
 
@@ -449,7 +449,7 @@ uname -m
 
 # Expected outputs:
 # x86_64 = Intel/AMD 64-bit
-# aarch64 = ARM 64-bit (M1/M2/M3, Raspberry Pi, etc.)
+# aarch64 = ARM 64-bit (M1/M2/M3/M4/M5, Raspberry Pi, etc.)
 ```
 
 Download the matching binary variant.
