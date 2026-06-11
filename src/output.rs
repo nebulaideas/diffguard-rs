@@ -155,11 +155,11 @@ pub fn print_colored_report(
     }
 
     writeln!(writer)?;
-    writeln!(writer, "Verdict:         {}", verdict.verdict)?;
-    writeln!(writer, "Critical Issues: {}", verdict.critical_issues)?;
-    writeln!(writer, "Security Issues: {}", verdict.security_issues)?;
+    writeln!(writer, "Verdict:          {}", verdict.verdict)?;
+    writeln!(writer, "Critical Issues:  {}", verdict.critical_issues)?;
+    writeln!(writer, "Security Issues:  {}", verdict.security_issues)?;
     writeln!(writer, "Important Issues: {}", verdict.important_issues)?;
-    writeln!(writer, "Suggestions:     {}", verdict.suggestions)?;
+    writeln!(writer, "Suggestions:      {}", verdict.suggestions)?;
     writeln!(writer)?;
     writeln!(writer, "{}", review)?;
     Ok(())
@@ -277,10 +277,10 @@ mod tests {
         assert!(content.contains("deepseek"));
         assert!(content.contains("deepseek-v4-flash"));
         assert!(content.contains("looks good"));
-        assert!(content.contains("CriticalIssues:"));
-        assert!(content.contains("SecurityIssues:"));
-        assert!(content.contains("ImportantIssues:"));
-        assert!(content.contains("Suggestions:"));
+        assert!(content.contains("CriticalIssues:  0"));
+        assert!(content.contains("SecurityIssues:  0"));
+        assert!(content.contains("ImportantIssues: 0"));
+        assert!(content.contains("Suggestions:     0"));
     }
 
     #[test]
@@ -344,8 +344,8 @@ mod tests {
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("REQUEST_CHANGES"));
         assert!(output.contains("fix these issues"));
-        assert!(output.contains("Critical Issues: 3"));
-        assert!(output.contains("Security Issues: 1"));
+        assert!(output.contains("Critical Issues:  3"));
+        assert!(output.contains("Security Issues:  1"));
     }
 
     #[test]
@@ -433,7 +433,10 @@ mod tests {
             output.contains("Important Issues: 2"),
             "important issues missing"
         );
-        assert!(output.contains("Suggestions:     4"), "suggestions missing");
+        assert!(
+            output.contains("Suggestions:      4"),
+            "suggestions missing"
+        );
     }
 
     #[test]
