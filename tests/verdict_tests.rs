@@ -1,5 +1,6 @@
 use rs_guard::verdict::{
-    determine_review_state, evaluate_by_tags, parse_verdict, ReviewState, Verdict,
+    determine_review_state, evaluate_by_tags, parse_metadata_block, parse_verdict, ReviewState,
+    Verdict,
 };
 
 #[test]
@@ -18,9 +19,10 @@ fn test_parse_negative_verdict() {
 }
 
 #[test]
-fn test_parse_critical_bugs_gt_2() {
+fn test_parse_critical_issues_gt_0_blocks() {
+    // Any [Critical] issue blocks merge regardless of verdict
     let response =
-        "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 5\nSecurityIssues: 0";
+        "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 5\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0";
     let (_verdict, state) = parse_verdict(response).unwrap();
     assert_eq!(state, ReviewState::RequestChanges);
 }
@@ -34,19 +36,21 @@ fn test_parse_security_issues_gt_0() {
 }
 
 #[test]
-fn test_parse_positive_with_minor_bugs_yields_comment() {
+fn test_parse_positive_with_2_important_issues_yields_comment() {
+    // [Important] 1-2 → COMMENT (human review recommended, not blocked)
     let response =
-        "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 2\nSecurityIssues: 0";
+        "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 2\nSuggestions: 0";
     let (_verdict, state) = parse_verdict(response).unwrap();
     assert_eq!(state, ReviewState::Comment);
 }
 
 #[test]
-fn test_parse_positive_with_1_critical_bug_yields_comment() {
+fn test_parse_positive_with_1_critical_issue_yields_request_changes() {
+    // [Critical] always blocks, even with positive verdict
     let response =
-        "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 1\nSecurityIssues: 0";
+        "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 1\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0";
     let (_verdict, state) = parse_verdict(response).unwrap();
-    assert_eq!(state, ReviewState::Comment);
+    assert_eq!(state, ReviewState::RequestChanges);
 }
 
 #[test]
@@ -111,6 +115,8 @@ fn test_determine_review_state_negative_always_requests_changes() {
         verdict: "NEGATIVE".to_string(),
         critical_bugs: 0,
         security_issues: 0,
+        important_issues: 0,
+        suggestions: 0,
     };
     assert_eq!(
         determine_review_state(&verdict),
@@ -124,6 +130,8 @@ fn test_determine_review_state_positive_with_zero_counts_approves() {
         verdict: "POSITIVE".to_string(),
         critical_bugs: 0,
         security_issues: 0,
+        important_issues: 0,
+        suggestions: 0,
     };
     assert_eq!(determine_review_state(&verdict), ReviewState::Approve);
 }
@@ -135,6 +143,8 @@ fn test_determine_review_state_asymmetric_safety() {
         verdict: "POSITIVE".to_string(),
         critical_bugs: 3,
         security_issues: 0,
+        important_issues: 0,
+        suggestions: 0,
     };
     assert_eq!(
         determine_review_state(&verdict),
@@ -146,9 +156,163 @@ fn test_determine_review_state_asymmetric_safety() {
         verdict: "NEGATIVE".to_string(),
         critical_bugs: 0,
         security_issues: 0,
+        important_issues: 0,
+        suggestions: 0,
     };
     assert_eq!(
         determine_review_state(&verdict),
         ReviewState::RequestChanges
     );
+}
+
+// ---------------------------------------------------------------------------
+// TDD tests for Step 2: new Verdict fields + updated determine_review_state
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_verdict_struct_has_important_issues_field() {
+    // Arrange / Act: construct Verdict with all four count fields
+    let verdict = Verdict {
+        verdict: "POSITIVE".to_string(),
+        critical_bugs: 0,
+        security_issues: 0,
+        important_issues: 2,
+        suggestions: 3,
+    };
+    // Assert: new fields are accessible and hold correct values
+    assert_eq!(verdict.important_issues, 2);
+    assert_eq!(verdict.suggestions, 3);
+}
+
+#[test]
+fn test_parse_metadata_block_reads_important_issues_and_suggestions() {
+    // Arrange: new four-field metadata block format from DEFAULT_PROMPT
+    let response = "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 3\nSuggestions: 2";
+    // Act
+    let verdict = parse_metadata_block(response).unwrap();
+    // Assert
+    assert_eq!(verdict.important_issues, 3);
+    assert_eq!(verdict.suggestions, 2);
+}
+
+#[test]
+fn test_parse_metadata_block_defaults_missing_new_fields_to_zero() {
+    // Arrange: legacy two-field block — new fields absent, should default to 0
+    let response =
+        "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0";
+    // Act
+    let verdict = parse_metadata_block(response).unwrap();
+    // Assert: new fields default gracefully
+    assert_eq!(verdict.important_issues, 0);
+    assert_eq!(verdict.suggestions, 0);
+}
+
+#[test]
+fn test_determine_review_state_important_issues_lt_3_yields_comment() {
+    // Arrange: 2 important issues, no critical or security — should yield COMMENT
+    let verdict = Verdict {
+        verdict: "POSITIVE".to_string(),
+        critical_bugs: 0,
+        security_issues: 0,
+        important_issues: 2,
+        suggestions: 0,
+    };
+    // Act / Assert
+    assert_eq!(determine_review_state(&verdict), ReviewState::Comment);
+}
+
+#[test]
+fn test_determine_review_state_important_issues_eq_3_yields_request_changes() {
+    // Arrange: exactly 3 important issues triggers REQUEST_CHANGES threshold
+    let verdict = Verdict {
+        verdict: "POSITIVE".to_string(),
+        critical_bugs: 0,
+        security_issues: 0,
+        important_issues: 3,
+        suggestions: 0,
+    };
+    // Act / Assert
+    assert_eq!(
+        determine_review_state(&verdict),
+        ReviewState::RequestChanges
+    );
+}
+
+#[test]
+fn test_determine_review_state_important_issues_gt_3_yields_request_changes() {
+    // Arrange: more than 3 important issues — still REQUEST_CHANGES
+    let verdict = Verdict {
+        verdict: "POSITIVE".to_string(),
+        critical_bugs: 0,
+        security_issues: 0,
+        important_issues: 5,
+        suggestions: 10,
+    };
+    // Act / Assert
+    assert_eq!(
+        determine_review_state(&verdict),
+        ReviewState::RequestChanges
+    );
+}
+
+#[test]
+fn test_determine_review_state_suggestions_alone_do_not_block() {
+    // Arrange: suggestions only — must never block merge
+    let verdict = Verdict {
+        verdict: "POSITIVE".to_string(),
+        critical_bugs: 0,
+        security_issues: 0,
+        important_issues: 0,
+        suggestions: 99,
+    };
+    // Act / Assert
+    assert_eq!(determine_review_state(&verdict), ReviewState::Approve);
+}
+
+#[test]
+fn test_evaluate_by_tags_counts_important_and_suggestion_tags() {
+    // Arrange: response with new severity tags from the five-axis prompt
+    let response =
+        "[Important] Missing error handling\n[Important] No test coverage\n[Suggestion] Rename variable";
+    // Act
+    let verdict = evaluate_by_tags(response);
+    // Assert
+    assert_eq!(verdict.important_issues, 2);
+    assert_eq!(verdict.suggestions, 1);
+    // Important alone (< 3) should not drive NEGATIVE verdict
+    assert_eq!(verdict.verdict, "POSITIVE");
+}
+
+#[test]
+fn test_evaluate_by_tags_three_important_issues_drives_negative() {
+    // Arrange: 3 [Important] tags — threshold for REQUEST_CHANGES
+    let response =
+        "[Important] Missing test\n[Important] Wrong abstraction\n[Important] Poor error handling";
+    // Act
+    let verdict = evaluate_by_tags(response);
+    // Assert: evaluate_by_tags sets verdict based on critical/security only;
+    // determine_review_state applies the important threshold
+    assert_eq!(verdict.important_issues, 3);
+    assert_eq!(
+        determine_review_state(&verdict),
+        ReviewState::RequestChanges
+    );
+}
+
+#[test]
+fn test_verdict_display_includes_all_four_fields() {
+    // Arrange
+    let verdict = Verdict {
+        verdict: "POSITIVE".to_string(),
+        critical_bugs: 1,
+        security_issues: 0,
+        important_issues: 2,
+        suggestions: 3,
+    };
+    // Act
+    let display = verdict.to_string();
+    // Assert: all four counts appear in Display output
+    assert!(display.contains("1"), "critical count missing");
+    assert!(display.contains("2"), "important count missing");
+    assert!(display.contains("3"), "suggestions count missing");
 }

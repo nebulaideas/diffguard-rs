@@ -246,6 +246,8 @@ mod tests {
             verdict: "POSITIVE".to_string(),
             critical_bugs: 0,
             security_issues: 0,
+            important_issues: 0,
+            suggestions: 0,
         };
         let state = ReviewState::Approve;
         let config = ReviewConfig {
@@ -275,6 +277,8 @@ mod tests {
                 verdict: "POSITIVE".to_string(),
                 critical_bugs: 0,
                 security_issues: 0,
+                important_issues: 0,
+                suggestions: 0,
             },
             &ReviewState::Comment,
             &ReviewConfig {
@@ -296,6 +300,8 @@ mod tests {
             verdict: "POSITIVE".to_string(),
             critical_bugs: 0,
             security_issues: 0,
+            important_issues: 0,
+            suggestions: 0,
         };
         let mut buf = Vec::new();
         print_colored_report("all good", &verdict, &ReviewState::Approve, &mut buf).unwrap();
@@ -310,6 +316,8 @@ mod tests {
             verdict: "NEGATIVE".to_string(),
             critical_bugs: 3,
             security_issues: 1,
+            important_issues: 0,
+            suggestions: 0,
         };
         let mut buf = Vec::new();
         print_colored_report(
@@ -332,6 +340,8 @@ mod tests {
             verdict: "POSITIVE".to_string(),
             critical_bugs: 0,
             security_issues: 0,
+            important_issues: 0,
+            suggestions: 0,
         };
         let config = ReviewConfig {
             provider: "openai".to_string(),

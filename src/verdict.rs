@@ -5,7 +5,8 @@
 //!
 //! The parser first attempts to extract a `[RS_GUARD_VERDICT_METADATA]` block
 //! via substring scanning. If no metadata block is found, it falls back to
-//! counting `[Critical Bug]` and `[Security]` tags in the response text.
+//! counting `[Critical]`, `[Security]`, `[Important]`, and `[Suggestion]` tags
+//! in the response text.
 
 use crate::error::RsGuardError;
 use regex::Regex;
@@ -29,6 +30,14 @@ static CRITICAL_RE: LazyLock<Regex> = LazyLock::new(|| {
 static SECURITY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[Security\]|\[Security Issue\]").expect("security regex is valid")
 });
+
+/// Compiled regex for counting important issue tags.
+static IMPORTANT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[Important\]").expect("important regex is valid"));
+
+/// Compiled regex for counting suggestion tags.
+static SUGGESTION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[Suggestion\]").expect("suggestion regex is valid"));
 
 /// GitHub Pull Request review states.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,18 +95,26 @@ impl ReviewState {
 pub struct Verdict {
     /// The verdict string: `"POSITIVE"` or `"NEGATIVE"`.
     pub verdict: String,
-    /// Count of critical bugs identified.
+    /// Count of `[Critical]` issues identified. Blocks merge unconditionally.
     pub critical_bugs: u32,
-    /// Count of security issues identified.
+    /// Count of `[Security]` issues identified. Blocks merge unconditionally.
     pub security_issues: u32,
+    /// Count of `[Important]` issues identified. Blocks merge when ≥ 3.
+    pub important_issues: u32,
+    /// Count of `[Suggestion]` items. Advisory only — never blocks merge.
+    pub suggestions: u32,
 }
 
 impl std::fmt::Display for Verdict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Verdict: {}, CriticalBugs: {}, SecurityIssues: {}",
-            self.verdict, self.critical_bugs, self.security_issues
+            "Verdict: {}, CriticalIssues: {}, SecurityIssues: {}, ImportantIssues: {}, Suggestions: {}",
+            self.verdict,
+            self.critical_bugs,
+            self.security_issues,
+            self.important_issues,
+            self.suggestions
         )
     }
 }
@@ -129,30 +146,41 @@ pub fn parse_metadata_block(response: &str) -> Option<Verdict> {
     // Only scan a limited window after the marker — the metadata block is small
     let scan_window = &section[..METADATA_SCAN_WINDOW.min(section.len())];
 
-    let verdict = extract_field(scan_window, "Verdict:")?;
+    let verdict = extract_field(scan_window, "Verdict:")?.to_string();
     // Accept both "CriticalIssues:" (new format) and "CriticalBugs:" (legacy format)
     // so that user-supplied prompt files using the old field name continue to work.
     let critical_bugs: u32 = extract_field(scan_window, "CriticalIssues:")
         .or_else(|| extract_field(scan_window, "CriticalBugs:"))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let security_issues: u32 = extract_field(scan_window, "SecurityIssues:")?
-        .parse()
+    let security_issues: u32 = extract_field(scan_window, "SecurityIssues:")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let important_issues: u32 = extract_field(scan_window, "ImportantIssues:")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let suggestions: u32 = extract_field(scan_window, "Suggestions:")
+        .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
     Some(Verdict {
-        verdict: verdict.to_string(),
+        verdict,
         critical_bugs,
         security_issues,
+        important_issues,
+        suggestions,
     })
 }
 
-/// Fallback verdict derivation by counting `[Critical Bug]` and `[Security]` tags.
+/// Fallback verdict derivation by counting severity tags in the response text.
 ///
 /// Used when the LLM response does not contain a structured metadata block.
+/// Counts `[Critical]`, `[Security]`, `[Important]`, and `[Suggestion]` tags.
 pub fn evaluate_by_tags(response: &str) -> Verdict {
     let critical_bugs = CRITICAL_RE.find_iter(response).count() as u32;
     let security_issues = SECURITY_RE.find_iter(response).count() as u32;
+    let important_issues = IMPORTANT_RE.find_iter(response).count() as u32;
+    let suggestions = SUGGESTION_RE.find_iter(response).count() as u32;
 
     Verdict {
         verdict: if critical_bugs > 0 || security_issues > 0 {
@@ -162,20 +190,27 @@ pub fn evaluate_by_tags(response: &str) -> Verdict {
         },
         critical_bugs,
         security_issues,
+        important_issues,
+        suggestions,
     }
 }
 
 /// Determines the GitHub review state from a parsed verdict.
 ///
 /// Uses an asymmetric safety model:
-/// - Pessimistic signals (`NEGATIVE`, any security issues, or >2 critical bugs)
-///   always produce `REQUEST_CHANGES`.
-/// - A `POSITIVE` verdict with zero issues produces `APPROVE`.
-/// - A `POSITIVE` verdict with 1–2 critical bugs and no security issues
-///   produces `COMMENT` (human review recommended).
+/// - `NEGATIVE` verdict, any `[Security]` issues, or any `[Critical]` issues → `REQUEST_CHANGES`.
+/// - `[Important]` issues ≥ 3 → `REQUEST_CHANGES`.
+/// - `[Important]` issues 1–2 → `COMMENT` (human review recommended).
+/// - All counts zero and verdict `POSITIVE` → `APPROVE`.
 pub fn determine_review_state(verdict: &Verdict) -> ReviewState {
-    if verdict.verdict == "NEGATIVE" || verdict.security_issues > 0 || verdict.critical_bugs > 2 {
+    if verdict.verdict == "NEGATIVE"
+        || verdict.security_issues > 0
+        || verdict.critical_bugs > 0
+        || verdict.important_issues >= 3
+    {
         ReviewState::RequestChanges
+    } else if verdict.important_issues > 0 {
+        ReviewState::Comment
     } else if verdict.critical_bugs == 0 && verdict.security_issues == 0 {
         ReviewState::Approve
     } else {
@@ -221,17 +256,19 @@ mod tests {
 
     #[test]
     fn test_parse_valid_positive() {
-        let response = "Some review text\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0";
+        let response = "Some review text\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(verdict.verdict, "POSITIVE");
         assert_eq!(verdict.critical_bugs, 0);
         assert_eq!(verdict.security_issues, 0);
+        assert_eq!(verdict.important_issues, 0);
+        assert_eq!(verdict.suggestions, 0);
         assert_eq!(determine_review_state(&verdict), ReviewState::Approve);
     }
 
     #[test]
     fn test_parse_negative() {
-        let response = "Some review text\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalBugs: 0\nSecurityIssues: 0";
+        let response = "Some review text\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(
             determine_review_state(&verdict),
@@ -240,9 +277,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_critical_gt_2() {
+    fn test_parse_critical_gt_0() {
         let response =
-            "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 5\nSecurityIssues: 0";
+            "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 1\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(
             determine_review_state(&verdict),
@@ -253,7 +290,7 @@ mod tests {
     #[test]
     fn test_parse_security_gt_0() {
         let response =
-            "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 1";
+            "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 1\nImportantIssues: 0\nSuggestions: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(
             determine_review_state(&verdict),
@@ -279,13 +316,15 @@ mod tests {
         let verdict = evaluate_by_tags(response);
         assert_eq!(verdict.critical_bugs, 0);
         assert_eq!(verdict.security_issues, 0);
+        assert_eq!(verdict.important_issues, 0);
+        assert_eq!(verdict.suggestions, 0);
         assert_eq!(determine_review_state(&verdict), ReviewState::Approve);
     }
 
     #[test]
-    fn test_positive_with_minor_bugs() {
+    fn test_positive_with_important_issues_comment() {
         let response =
-            "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 1\nSecurityIssues: 0";
+            "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 1\nSuggestions: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(determine_review_state(&verdict), ReviewState::Comment);
     }
@@ -310,10 +349,9 @@ mod tests {
 
     #[test]
     fn test_metadata_block_at_end_of_large_response() {
-        // Create a large response with metadata at the end
         let padding = "x".repeat(3000);
         let response = format!(
-            "{}\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0",
+            "{}\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0",
             padding
         );
         let verdict = parse_metadata_block(&response).unwrap();
@@ -324,10 +362,9 @@ mod tests {
 
     #[test]
     fn test_metadata_block_near_boundary() {
-        // Create a response where metadata is near the 4096 byte window boundary
         let padding = "x".repeat(3500);
         let response = format!(
-            "{}\n[RS_GUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalBugs: 1\nSecurityIssues: 0",
+            "{}\n[RS_GUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalIssues: 1\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0",
             padding
         );
         let verdict = parse_metadata_block(&response).unwrap();
@@ -338,15 +375,12 @@ mod tests {
 
     #[test]
     fn test_metadata_block_beyond_window_fallback_to_tags() {
-        // Create a response where metadata fields are beyond the scan window
-        // With 4096 window, we need more than 4096 chars between marker and fields
         let padding = "x".repeat(5000);
         let response = format!(
-            "[RS_GUARD_VERDICT_METADATA]\n{}\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0",
+            "[RS_GUARD_VERDICT_METADATA]\n{}\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0",
             padding
         );
         let verdict = parse_metadata_block(&response);
-        // Should return None since fields are beyond the window
         assert!(verdict.is_none());
     }
 
@@ -374,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_valid_response_parses_successfully() {
-        let response = "Some review text\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0";
+        let response = "Some review text\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0";
         let result = parse_verdict(response);
         assert!(result.is_ok());
         let (verdict, state) = result.unwrap();
@@ -388,17 +422,18 @@ mod tests {
     fn test_metadata_block_reversed_field_order() {
         // Fields in reverse order should still parse correctly
         let response =
-            "[RS_GUARD_VERDICT_METADATA]\nSecurityIssues: 0\nCriticalBugs: 1\nVerdict: NEGATIVE";
+            "[RS_GUARD_VERDICT_METADATA]\nSuggestions: 1\nImportantIssues: 0\nSecurityIssues: 0\nCriticalIssues: 1\nVerdict: NEGATIVE";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(verdict.verdict, "NEGATIVE");
         assert_eq!(verdict.critical_bugs, 1);
         assert_eq!(verdict.security_issues, 0);
+        assert_eq!(verdict.suggestions, 1);
     }
 
     #[test]
     fn test_metadata_block_fields_with_content_between() {
         // Content between fields should not affect parsing
-        let response = "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nSome extra text here\nCriticalBugs: 0\nMore text\nSecurityIssues: 0";
+        let response = "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nSome extra text here\nCriticalIssues: 0\nMore text\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(verdict.verdict, "POSITIVE");
         assert_eq!(verdict.critical_bugs, 0);
@@ -409,10 +444,24 @@ mod tests {
     fn test_metadata_block_random_field_order() {
         // Random field order should work
         let response =
-            "[RS_GUARD_VERDICT_METADATA]\nCriticalBugs: 2\nVerdict: NEGATIVE\nSecurityIssues: 1";
+            "[RS_GUARD_VERDICT_METADATA]\nImportantIssues: 2\nCriticalIssues: 1\nVerdict: NEGATIVE\nSecurityIssues: 0\nSuggestions: 3";
         let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(verdict.verdict, "NEGATIVE");
+        assert_eq!(verdict.critical_bugs, 1);
+        assert_eq!(verdict.security_issues, 0);
+        assert_eq!(verdict.important_issues, 2);
+        assert_eq!(verdict.suggestions, 3);
+    }
+
+    #[test]
+    fn test_legacy_critical_bugs_field_still_parses() {
+        // Regression: user-supplied prompts using old CriticalBugs: field must keep working
+        let response =
+            "[RS_GUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalBugs: 2\nSecurityIssues: 1";
+        let verdict = parse_metadata_block(response).unwrap();
         assert_eq!(verdict.critical_bugs, 2);
         assert_eq!(verdict.security_issues, 1);
+        assert_eq!(verdict.important_issues, 0);
+        assert_eq!(verdict.suggestions, 0);
     }
 }
