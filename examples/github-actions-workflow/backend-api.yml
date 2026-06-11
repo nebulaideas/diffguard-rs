@@ -1,17 +1,31 @@
-name: AI Code Review (Rails)
+name: AI Code Review (Backend / API)
+
+# Agnostic backend and API workflow.
+# Triggers on PRs that touch server-side source, database migrations, config, or tests.
+#
+# ## Customize path filters
+# Adjust the paths below to match your project's directory layout.
+# GitHub Actions path filters use minimatch (no brace expansion — each glob is a separate entry).
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    # Only review PRs that touch application code.
     paths:
-      - 'app/**'
+      - 'src/**'
       - 'lib/**'
-      - 'config/**'
+      - 'app/**'
+      - 'api/**'
       - 'db/**'
-      - 'spec/**'
+      - 'migrations/**'
+      - 'config/**'
+      # Include all common test directory conventions:
+      #   tests/ — Rust, Python, Node.js
+      #   test/  — Java, Ruby (Rails)
+      #   spec/  — Ruby (RSpec), Elixir
+      # Remove the entries that don't apply to your project.
+      - 'tests/**'
       - 'test/**'
-      - 'Gemfile*'
+      - 'spec/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -44,7 +58,9 @@ jobs:
           chmod +x rs-guard-x86_64-unknown-linux-gnu
           mv rs-guard-x86_64-unknown-linux-gnu rs-guard
 
-      # Use a Rails-specific prompt for deeper domain context.
+      # Use the backend/API prompt for deeper domain context.
+      # Copy examples/prompts/backend-api.md to .github/review-prompt.md in your repo,
+      # then customize the "## Project-Specific Focus" section for your stack.
       - name: AI Code Review
         run: ./rs-guard --prompt-file .github/review-prompt.md
         env:
