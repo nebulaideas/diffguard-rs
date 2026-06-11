@@ -399,6 +399,18 @@ fn test_parse_metadata_block_empty_field_value_defaults_to_zero() {
 }
 
 #[test]
+fn test_parse_metadata_block_whitespace_field_value_defaults_to_zero() {
+    // Arrange: ImportantIssues field has only whitespace after the colon.
+    // The parser must trim before parsing, so "   " should not cause a parse error.
+    let response = "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues:   \nSuggestions: 0";
+    // Act
+    let verdict = parse_metadata_block(response).unwrap();
+    // Assert: whitespace-only value treated identically to empty — defaults to 0
+    assert_eq!(verdict.important_issues, 0);
+    assert_eq!(verdict.verdict, "POSITIVE");
+}
+
+#[test]
 fn test_review_state_display() {
     // Arrange / Act / Assert: Display impl matches GitHub API event string
     assert_eq!(ReviewState::Approve.to_string(), "APPROVE");
