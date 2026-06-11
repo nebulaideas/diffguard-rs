@@ -342,6 +342,65 @@ fn test_evaluate_by_tags_three_important_issues_drives_negative() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// New tests: additional branch coverage for Step 5
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_parse_verdict_full_four_field_block_round_trip() {
+    // Arrange: canonical four-field block as emitted by the updated DEFAULT_PROMPT
+    let response = "Good review.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 2";
+    // Act
+    let (verdict, state) = parse_verdict(response).unwrap();
+    // Assert: all fields parsed, suggestions alone never block
+    assert_eq!(verdict.verdict, "POSITIVE");
+    assert_eq!(verdict.critical_issues, 0);
+    assert_eq!(verdict.security_issues, 0);
+    assert_eq!(verdict.important_issues, 0);
+    assert_eq!(verdict.suggestions, 2);
+    assert_eq!(state, ReviewState::Approve);
+}
+
+#[test]
+fn test_parse_verdict_important_issues_eq_1_yields_comment() {
+    // Arrange: exactly 1 important issue — below threshold, yields COMMENT not REQUEST_CHANGES
+    let response = "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 1\nSuggestions: 0";
+    // Act
+    let (_verdict, state) = parse_verdict(response).unwrap();
+    // Assert
+    assert_eq!(state, ReviewState::Comment);
+}
+
+#[test]
+fn test_parse_verdict_important_issues_eq_3_yields_request_changes() {
+    // Arrange: exactly 3 important issues — at threshold, yields REQUEST_CHANGES
+    let response = "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 3\nSuggestions: 0";
+    // Act
+    let (_verdict, state) = parse_verdict(response).unwrap();
+    // Assert
+    assert_eq!(state, ReviewState::RequestChanges);
+}
+
+#[test]
+fn test_parse_metadata_block_empty_field_value_defaults_to_zero() {
+    // Arrange: ImportantIssues field present but has no numeric value — should default to 0,
+    // not return None (a missing count is treated as zero, not a parse failure).
+    let response = "[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues:\nSuggestions: 0";
+    // Act
+    let verdict = parse_metadata_block(response).unwrap();
+    // Assert: graceful default to 0
+    assert_eq!(verdict.important_issues, 0);
+    assert_eq!(verdict.verdict, "POSITIVE");
+}
+
+#[test]
+fn test_review_state_display() {
+    // Arrange / Act / Assert: Display impl matches GitHub API event string
+    assert_eq!(ReviewState::Approve.to_string(), "APPROVE");
+    assert_eq!(ReviewState::RequestChanges.to_string(), "REQUEST_CHANGES");
+    assert_eq!(ReviewState::Comment.to_string(), "COMMENT");
+}
+
 #[test]
 fn test_verdict_display_includes_all_four_fields() {
     // Arrange

@@ -41,9 +41,12 @@ fn local_config() -> Config {
 const VALID_DIFF: &str =
     "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1 +1,2 @@\n+line1\n line0";
 
-const POSITIVE_RESPONSE: &str = "Looks good.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalBugs: 0\nSecurityIssues: 0";
+const POSITIVE_RESPONSE: &str = "Looks good.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 0\nSuggestions: 0";
 
-const NEGATIVE_RESPONSE: &str = "Found issues.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalBugs: 2\nSecurityIssues: 1";
+const NEGATIVE_RESPONSE: &str = "Found issues.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: NEGATIVE\nCriticalIssues: 2\nSecurityIssues: 1\nImportantIssues: 0\nSuggestions: 0";
+
+/// LLM response with 2 important issues and no critical/security — should yield COMMENT.
+const IMPORTANT_ISSUES_RESPONSE: &str = "Review complete.\n\n[RS_GUARD_VERDICT_METADATA]\nVerdict: POSITIVE\nCriticalIssues: 0\nSecurityIssues: 0\nImportantIssues: 2\nSuggestions: 1";
 
 #[tokio::test]
 async fn test_full_pipeline_ci_approve() {
@@ -429,4 +432,42 @@ async fn test_full_pipeline_llm_retries_exhausted() {
     // The call should fail after retries due to repeated 500 errors
     let result = run_pipeline(config, None).await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_full_pipeline_ci_important_issues_yield_comment_not_blocked() {
+    // Arrange: LLM returns 2 important issues (below the 3-issue REQUEST_CHANGES threshold).
+    // The pipeline should succeed (COMMENT state is not a ReviewBlocked result).
+    let github = MockServer::start().await;
+    let llm = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path_regex(r"/repos/test-owner/test-repo/pulls/\d+"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(VALID_DIFF))
+        .mount(&github)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(r"/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"content": IMPORTANT_ISSUES_RESPONSE}}]
+        })))
+        .mount(&llm)
+        .await;
+
+    // COMMENT review submission
+    Mock::given(method("POST"))
+        .and(path_regex(r"/repos/test-owner/test-repo/pulls/\d+/reviews"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&github)
+        .await;
+
+    let mut config = ci_config(42, "deepseek", "test-token");
+    config.github_base_url = github.uri();
+    config.provider_config.base_url = Some(llm.uri());
+    config.no_cache = true;
+
+    let result = run_pipeline(config, None).await;
+    // Act / Assert: pipeline succeeds — important issues produce COMMENT, not ReviewBlocked
+    assert!(matches!(result, Ok(PipelineResult::Success)));
 }
