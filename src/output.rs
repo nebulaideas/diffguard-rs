@@ -150,6 +150,8 @@ pub fn print_colored_report(
     writeln!(writer, "Verdict:         {}", verdict.verdict)?;
     writeln!(writer, "Critical Issues: {}", verdict.critical_issues)?;
     writeln!(writer, "Security Issues: {}", verdict.security_issues)?;
+    writeln!(writer, "Important Issues: {}", verdict.important_issues)?;
+    writeln!(writer, "Suggestions:     {}", verdict.suggestions)?;
     writeln!(writer)?;
     writeln!(writer, "{}", review)?;
     Ok(())
