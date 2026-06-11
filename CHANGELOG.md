@@ -40,7 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `important_issues >= 3` → `REQUEST_CHANGES`
   - `important_issues` 1–2 → `COMMENT` (advisory, not blocked)
   - Otherwise → `APPROVE`
-- **Metadata block format** updated to four fields:
+- **Metadata block format** updated to include four severity-count fields (plus the existing
+  `Verdict` line):
 
   ```text
   [RS_GUARD_VERDICT_METADATA]
