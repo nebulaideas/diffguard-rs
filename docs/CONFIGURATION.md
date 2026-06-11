@@ -122,6 +122,23 @@ output_per_million = 60  # $0.60 per 1M output tokens
 
 ---
 
+## Verdict Behavior
+
+The review state submitted to GitHub is determined by counting severity-tagged findings in the
+LLM response:
+
+| Condition | GitHub event |
+| --------- | ------------ |
+| `NEGATIVE` verdict, or any `[Critical]` / `[Security]` finding | `REQUEST_CHANGES` |
+| `important_issues >= 3` (compile-time constant `IMPORTANT_ISSUES_THRESHOLD = 3` in `src/verdict.rs`; not configurable via TOML/env) | `REQUEST_CHANGES` |
+| `important_issues` is 1 or 2 | `COMMENT` |
+| No issues | `APPROVE` |
+
+To use a different threshold, change `IMPORTANT_ISSUES_THRESHOLD` in `src/verdict.rs` and
+recompile from source.
+
+---
+
 ## CLI Flags
 
 | Flag            | Short | Default                    | Description                          |
